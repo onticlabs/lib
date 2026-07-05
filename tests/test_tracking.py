@@ -1,4 +1,6 @@
-import sys, types
+import sys
+import types
+
 from ontic_lib import tracking
 
 class FakeTrackio(types.ModuleType):

@@ -58,3 +58,51 @@ tracker.finish()
     one).
 - Every W&B call (`init`, `log`, `finish`) is wrapped so a W&B/metrics-SaaS
   failure can never crash a training run.
+
+## Checkpointing
+
+```python
+from ontic_lib.checkpoint import CheckpointManager
+
+mgr = CheckpointManager("./output/checkpoints", keep_last=3)
+
+# in the training loop
+mgr.save(step, {"model": model.state_dict(), "opt": opt.state_dict()},
+         run_id=run_id, keep_last=3)
+
+# on resume
+result = mgr.resume()
+if result is not None:
+    state, meta = result
+    model.load_state_dict(state["model"])
+    start_step = meta["step"]
+```
+
+- Backend-agnostic: serialization defaults to `pickle`, but any framework can
+  plug in its own format, e.g. `CheckpointManager(dir, save_fn=torch.save,
+  load_fn=torch.load)`.
+- Writes are atomic (temp file + `os.replace`) so a crash mid-save never
+  leaves a corrupt checkpoint behind.
+- A `latest.json` pointer file makes `resume()` and `latest_step` O(1) and
+  independent of the serialization format.
+- `keep_last` prunes older `step_*.ckpt` files, always keeping the one just
+  written.
+
+## Metrics
+
+```python
+from ontic_lib.metrics import MetricsAccumulator, psnr
+
+score = psnr(prediction, target, max_val=1.0)
+
+acc = MetricsAccumulator()
+for batch in loader:
+    acc.add({"loss": loss.item(), "psnr": psnr(pred, batch)}, n=batch_size)
+print(acc.mean())
+acc.reset()
+```
+
+- `psnr(a, b, max_val=1.0)`: peak signal-to-noise ratio in dB between two
+  array-likes; returns `inf` for identical inputs.
+- `MetricsAccumulator`: a weighted running mean over per-step metric dicts —
+  handy for averaging batch metrics of varying batch size over an epoch.
