@@ -212,7 +212,11 @@ def render_dissolution(alpha, n_state, early_w=6, late_lo=30, late_hi=50):
     """Render-based dissolution proxy: late-window foreground rms-spread /
     early-window rms-spread, from the predicted ALPHA (what the eye sees, incl.
     translucent halo). >1 = the rendered footprint puffs out (dissolving).
-    alpha: (T,H,W) float over the full rollout (given+predicted frames)."""
+    alpha: (T,H,W) float over the full rollout (given+predicted frames).
+
+    Caveat: the alpha frame covers the WHOLE scene — a large static plate
+    dominates the alpha-weighted spread and compresses the ratio toward 1, so
+    treat this as a directional signal, not an object-isolated measurement."""
     if alpha is None:
         return float("nan")
     T = alpha.shape[0]
