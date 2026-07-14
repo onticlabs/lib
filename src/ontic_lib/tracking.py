@@ -50,17 +50,16 @@ class Tracker:
 
 def read_metrics(path) -> list[dict]:
     """All decodable records from a metrics.jsonl. A truncated final line (hard-kill
-    mid-append) is expected and skipped, as are blank lines."""
+    mid-append, possibly mid multi-byte character) is expected and skipped, as are
+    blank lines."""
     records: list[dict] = []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+    for raw in Path(path).read_bytes().splitlines():
+        if not raw.strip():
+            continue
+        try:
+            records.append(json.loads(raw))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
     return records
 
 

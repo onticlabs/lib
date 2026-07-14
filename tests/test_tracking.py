@@ -43,6 +43,15 @@ def test_read_metrics_skips_truncated_tail(tmp_path):
     assert recs[1]["loss"] == 0.5
 
 
+def test_read_metrics_skips_mid_multibyte_truncation(tmp_path):
+    p = tmp_path / "metrics.jsonl"
+    good = '{"step": 1, "ts": 2, "note": "café"}\n'.encode()
+    truncated = '{"step": 2, "ts": 3, "note": "café"}'.encode()[:-3]  # cut inside "é"
+    p.write_bytes(good + truncated)
+    recs = tracking.read_metrics(p)
+    assert len(recs) == 1 and recs[0]["step"] == 1
+
+
 def test_wandb_optional_and_never_fatal(monkeypatch, tmp_path):
     bad = types.ModuleType("wandb")
     bad.init = lambda **kw: (_ for _ in ()).throw(RuntimeError("down"))
