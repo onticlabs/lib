@@ -1,30 +1,49 @@
+import json
 import sys
 import types
 
 from ontic_lib import tracking
 
-class FakeTrackio(types.ModuleType):
-    def __init__(self):
-        super().__init__("trackio")
-        self.calls = []
-        self.init = lambda **kw: self.calls.append(("init", kw)) or self
-        self.log = lambda metrics, step=None: self.calls.append(("log", metrics, step))
-        self.finish = lambda: self.calls.append(("finish",))
 
-def test_trackio_dir_defaults_into_output(monkeypatch, tmp_path):
-    fake = FakeTrackio()
-    monkeypatch.setitem(sys.modules, "trackio", fake)
+def test_jsonl_is_the_record(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("TRACKIO_DIR", raising=False)
+    monkeypatch.delenv("ONTIC_WANDB_RUN_ID", raising=False)
     t = tracking.init("saliency", {"lr": 0.1})
-    import os
-    assert os.environ["TRACKIO_DIR"].endswith("output")
     t.log({"loss": 1.0}, step=1)
+    t.log({"loss": 0.5, "acc": 0.9}, step=2)
     t.finish()
-    assert ("log", {"loss": 1.0}, 1) in fake.calls
+    lines = [json.loads(x) for x in
+             (tmp_path / "output" / "metrics.jsonl").read_text().splitlines()]
+    assert lines[0]["_type"] == "config"
+    assert lines[0]["project"] == "saliency" and lines[0]["config"] == {"lr": 0.1}
+    assert lines[1]["step"] == 1 and lines[1]["loss"] == 1.0 and "ts" in lines[1]
+    assert lines[2] == {**lines[2], "step": 2, "loss": 0.5, "acc": 0.9}
+
+
+def test_append_on_resume_not_truncate(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ONTIC_WANDB_RUN_ID", raising=False)
+    t = tracking.init("p")
+    t.log({"a": 1}, step=1)
+    t.finish()
+    t2 = tracking.init("p")
+    t2.log({"a": 2}, step=2)
+    t2.finish()
+    lines = (tmp_path / "output" / "metrics.jsonl").read_text().splitlines()
+    assert len(lines) == 4  # config, log, config, log
+
+
+def test_read_metrics_skips_truncated_tail(tmp_path):
+    p = tmp_path / "metrics.jsonl"
+    p.write_text('{"_type": "config", "project": "p", "config": {}, "ts": 1}\n'
+                 '{"step": 1, "ts": 2, "loss": 0.5}\n'
+                 '{"step": 2, "ts": 3, "lo')  # hard-kill truncation
+    recs = tracking.read_metrics(p)
+    assert len(recs) == 2
+    assert recs[1]["loss"] == 0.5
+
 
 def test_wandb_optional_and_never_fatal(monkeypatch, tmp_path):
-    monkeypatch.setitem(sys.modules, "trackio", FakeTrackio())
     bad = types.ModuleType("wandb")
     bad.init = lambda **kw: (_ for _ in ()).throw(RuntimeError("down"))
     monkeypatch.setitem(sys.modules, "wandb", bad)
@@ -33,4 +52,16 @@ def test_wandb_optional_and_never_fatal(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     t = tracking.init("p")                    # must not raise
     t.log({"x": 1})
+    t.finish()
+    assert (tmp_path / "output" / "metrics.jsonl").is_file()
+
+
+def test_flush_per_line_visible_before_finish(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ONTIC_WANDB_RUN_ID", raising=False)
+    t = tracking.init("p")
+    t.log({"x": 1}, step=1)
+    # BEFORE finish(): another process (the bootstrap sync thread) must see the line
+    text = (tmp_path / "output" / "metrics.jsonl").read_text()
+    assert '"x": 1' in text
     t.finish()
