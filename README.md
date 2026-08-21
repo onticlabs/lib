@@ -92,8 +92,10 @@ if result is not None:
 
 ```python
 from ontic_lib.metrics import MetricsAccumulator, psnr
+from ontic_lib.metrics.image import compute_psnr_values
 
 score = psnr(prediction, target, max_val=1.0)
+batch_score = compute_psnr_values(batch["target"], prediction)
 
 acc = MetricsAccumulator()
 for batch in loader:
@@ -102,7 +104,13 @@ print(acc.mean())
 acc.reset()
 ```
 
-- `psnr(a, b, max_val=1.0)`: peak signal-to-noise ratio in dB between two
-  array-likes; returns `inf` for identical inputs.
+- `psnr(a, b, max_val=1.0)`: scalar, torch-backed peak signal-to-noise ratio
+  in dB between two tensor-like inputs; returns `inf` for identical inputs.
+- `ontic_lib.metrics.image`: per-image torch helpers for PSNR, SSIM, and
+  LPIPS-style model outputs.
+- `ontic_lib.metrics.particles3d`: particle-cloud and rendered-rollout metrics.
 - `MetricsAccumulator`: a weighted running mean over per-step metric dicts —
   handy for averaging batch metrics of varying batch size over an epoch.
+
+The former `ontic_lib.image_metrics` and `ontic_lib.metrics3d` import paths
+remain available as compatibility shims.

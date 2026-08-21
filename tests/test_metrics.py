@@ -2,34 +2,34 @@ from __future__ import annotations
 
 import math
 
-import numpy as np
 import pytest
+import torch
 
 from ontic_lib.metrics import MetricsAccumulator, psnr
 
 
 def test_psnr_of_identical_arrays_is_inf():
-    a = np.array([0.1, 0.5, 0.9])
+    a = torch.tensor([0.1, 0.5, 0.9])
 
     assert psnr(a, a) == float("inf")
 
 
 def test_psnr_matches_closed_form_on_known_example():
-    a = np.array([0.0, 0.0, 0.0, 0.0])
-    b = np.array([1.0, 1.0, 1.0, 1.0])
+    a = torch.tensor([0.0, 0.0, 0.0, 0.0])
+    b = torch.tensor([1.0, 1.0, 1.0, 1.0])
     # mse = 1.0, max_val = 1.0 -> 20*log10(1) - 10*log10(1) = 0
     assert psnr(a, b, max_val=1.0) == pytest.approx(0.0, abs=1e-9)
 
-    c = np.array([0.0, 0.0])
-    d = np.array([0.5, 0.5])
+    c = torch.tensor([0.0, 0.0])
+    d = torch.tensor([0.5, 0.5])
     # mse = 0.25 -> 20*log10(1) - 10*log10(0.25) = 6.0206 dB
     expected = 20 * math.log10(1.0) - 10 * math.log10(0.25)
     assert psnr(c, d, max_val=1.0) == pytest.approx(expected, abs=1e-9)
 
 
 def test_psnr_shape_mismatch_raises_value_error():
-    a = np.zeros((2, 2))
-    b = np.zeros((3,))
+    a = torch.zeros((2, 2))
+    b = torch.zeros((3,))
 
     with pytest.raises(ValueError):
         psnr(a, b)

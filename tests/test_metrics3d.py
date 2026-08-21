@@ -1,10 +1,15 @@
 """Unit tests for ontic_lib.metrics3d on synthetic particle clouds / frames."""
 import numpy as np
 import pytest
+import torch
 
-torch = pytest.importorskip("torch")
+from ontic_lib.metrics import particles3d as m3
 
-from ontic_lib import metrics3d as m3
+
+def test_legacy_metrics3d_import_is_preserved():
+    from ontic_lib import metrics3d as legacy
+
+    assert legacy.dissolution is m3.dissolution
 
 
 def _two_cluster_cloud(n_obj=200, n_plate=800, gap=0.5, seed=0):
