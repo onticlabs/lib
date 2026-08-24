@@ -22,4 +22,10 @@ Conventions (binding for all geometric APIs)
 * Canonical quaternions are real-first ``(w, x, y, z)``. Explicit ``xyzw``
   conversion functions exist for SciPy, RoMa, and legacy checkpoints.
 * Depth APIs distinguish camera-z depth from Euclidean ray distance explicitly.
+* Ops with both a torch reference and a vendored CUDA kernel take
+  ``impl="torch" | "cuda" | "auto"``. The default is ``"auto"`` only where the
+  kernel is measured bit-exact against the reference (Morton/Hilbert codes);
+  FPS defaults to ``"torch"`` because its kernel can pick different (equally
+  spread) indices on exact distance ties. FPS starts at index 0 and greedily
+  maximizes squared distance in float32.
 """

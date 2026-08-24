@@ -1,11 +1,13 @@
-"""Opt-in access to the CUDA extension kernels vendored under ``ext/``.
+"""Access to the CUDA extension kernels vendored under ``ext/``.
 
 The pure-torch functions in :mod:`ontic_lib.pointops` are the reference
-implementations. Nothing in the core library calls into this module
-automatically: the CUDA kernels are separate installs
-(``scripts/install_cuda_ext.sh``), run only on CUDA tensors, and are not
-bitwise-identical to the reference (different FPS tie-breaking, different
-Hilbert curve variants). Switching to them is a per-call-site decision.
+implementations; the kernels are separate installs
+(``scripts/install_cuda_ext.sh``) that run only on CUDA tensors. Functions
+with a kernel counterpart take an ``impl`` argument ("torch" | "cuda" |
+"auto") resolved by :func:`resolve_impl`. Automatic routing (``"auto"``) is
+enabled by default only where the kernel is measured bit-exact against the
+reference (Morton/Hilbert codes); FPS defaults to ``"torch"`` because its
+kernel is quality-identical but not index-stable on distance ties.
 """
 
 from __future__ import annotations
@@ -58,6 +60,25 @@ def _require(module, name: str):
     return module
 
 
+def resolve_impl(tensor: Tensor, impl: str, module, name: str) -> bool:
+    """Resolve an ``impl`` argument to "use the CUDA kernel?" for one call.
+
+    ``"torch"`` never routes; ``"cuda"`` demands a CUDA tensor and the
+    installed extension (raising otherwise); ``"auto"`` routes exactly when
+    both are available.
+    """
+    if impl not in ("torch", "cuda", "auto"):
+        raise ValueError(f"impl must be 'torch', 'cuda', or 'auto', got {impl!r}")
+    if impl == "torch":
+        return False
+    if impl == "cuda":
+        if not tensor.is_cuda:
+            raise ValueError(f"impl='cuda' requires a CUDA tensor for {name}")
+        _require(module, name)
+        return True
+    return tensor.is_cuda and module is not None
+
+
 def furthest_point_indices(points: Tensor, count: int) -> Tensor:
     """CUDA counterpart of :func:`ontic_lib.pointops.furthest_point_indices`.
 
@@ -78,16 +99,17 @@ def furthest_point_indices(points: Tensor, count: int) -> Tensor:
 def morton_encode(grid_coordinates: Tensor) -> Tensor:
     """GPU Morton codes for non-negative integer ``(N, 3)`` grid coordinates."""
     ser = _require(cuda_serialization(), "point_serialization")
-    return ser.morton_encode(grid_coordinates)
+    return ser.morton_encode(grid_coordinates).to(torch.int64)
 
 
 def hilbert_encode(grid_coordinates: Tensor, *, depth: int = 16) -> Tensor:
     """GPU Hilbert codes for non-negative integer ``(N, 3)`` grid coordinates.
 
     ``depth`` is the bits-per-axis, matching the reference
-    :func:`ontic_lib.pointops.serialization.hilbert_encode` parameter. Codes
-    come from the CUDA kernel's curve variant and are ordering-compatible but
-    not necessarily value-identical to the reference implementation.
+    :func:`ontic_lib.pointops.serialization.hilbert_encode` parameter. The
+    kernel is measured bit-exact against the reference (the separate
+    ``hilbert_encode_approx`` binding is NOT — different curve, different
+    order; never mix it with reference codes).
     """
     ser = _require(cuda_serialization(), "point_serialization")
-    return ser.hilbert_encode(grid_coordinates, depth)
+    return ser.hilbert_encode(grid_coordinates, depth).to(torch.int64)

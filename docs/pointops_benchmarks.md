@@ -78,23 +78,31 @@ Steady 2.3× from fusing the cos/sin table + rotate-half chain into one kernel.
 Note the kernel path is forward-only w.r.t. coordinates; training with coord
 gradients must use the torch path.
 
-## Parity status (from the drop-in analysis)
+## Measured parity (`scripts/check_pointops_parity.py`, same A5000 env)
 
-- **Morton / Hilbert**: kernels are **bit-exact** vs the reference — verified
-  by transliterating the kernel math to Python and comparing at depths
-  4/8/16. Auto-dispatch cannot change results.
-- **FPS**: same contract (start at index 0, greedy max-squared-distance,
-  float32); only exact distance ties can differ (torch `argmax` takes the
-  first index, the CUDA reduction is order-dependent). Index-equality on
-  real clouds still needs an execution check on a cluster GPU node.
-- **RoPE**: numerics approximately equal (fused float ops), forward-only —
-  already switchable per call via `Point3DRoPE(use_cuda=True)`.
+- **Morton / Hilbert (exact kernel)**: `torch.equal` against the reference
+  over 200k random + edge-case coords at depths 8/12/16 — **bit-exact in
+  every case**, confirming the earlier source-level transliteration proof at
+  execution level.
+- **`hilbert_encode_approx`**: **100% of values differ AND the sort order
+  differs** from the exact kernel — it is a different curve, not a faster
+  equivalent. Never mix approx codes with reference/exact codes.
+- **FPS**: index sequences identical to the reference in 40/40 trials at
+  N≤4096; at N=32768/K=4096, **14/20 identical** — and in every diverging
+  trial the min-spread quality gap was exactly 0. So: quality-identical,
+  not index-stable at scale (float ties + reduction order).
+- **RoPE**: fused kernel vs torch module — max abs error 1.2e-7 (float32
+  epsilon level); relative error up to ~1e-2 only on near-zero outputs.
 
-## Where dispatch pays
+## Dispatch (implemented in `ontic_lib.pointops`)
 
-| op | verdict |
-|---|---|
-| Hilbert encode | **always** — 350–470×, bit-exact, zero risk |
-| FPS | **at batch/size scale** — 15–250× for B≥4; gate on tie caveat until GPU-node parity run |
-| RoPE | **training hot path** — 2.3×, forward-only, already opt-in via the module flag |
-| Morton encode | marginal — reference is sub-ms; route only alongside Hilbert for symmetry |
+Functions with a kernel counterpart take `impl="torch" | "cuda" | "auto"`:
+
+| op | default | rationale |
+|---|---|---|
+| `morton_encode` / `hilbert_encode` / `encode_grid` / `space_filling_stride*` | **`"auto"`** | bit-exact — routing can only change speed (10× / 350–470×), never results |
+| `furthest_point_indices` / `furthest_point_sample` | **`"torch"`** | 15–250× available, but not index-stable on ties — opt into `"cuda"`/`"auto"` per call site |
+| RoPE | module flag | already switchable via `Point3DRoPE(use_cuda=True)`, forward-only |
+
+`"cuda"` demands a CUDA tensor and the installed extension (raises otherwise);
+`"auto"` routes exactly when both are available and falls back to torch.

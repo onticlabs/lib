@@ -30,6 +30,10 @@ setup(
     name="serialize_cuda",
     version="0.1",
     install_requires=["torch"],
+    # install the Python wrapper package too — without this only the raw
+    # serialize_cuda .so lands in site-packages (uint64 returns, no validation)
+    packages=["point_serialization"],
+    package_dir={"point_serialization": "."},
     ext_modules=[
         CUDAExtension(
             name="serialize_cuda",
