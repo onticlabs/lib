@@ -164,9 +164,22 @@ point tokens, with a pure-torch fallback module), and `point_serialization`
 ./scripts/install_cuda_ext.sh pointops      # one at a time
 ```
 
-The core library never imports them: `ontic_lib.pointops` is the pure-torch
-implementation of the same operations, and the `ext/pointops` CUDA kernels are
-its accelerated counterpart for consumers that need the speed.
+The core library never imports them automatically: `ontic_lib.pointops` is
+the pure-torch reference implementation, and `ontic_lib.pointops.accel`
+exposes the installed kernels as an explicit opt-in —
+
+```python
+from ontic_lib.pointops import accel
+
+accel.available()   # {"pointops": True, "point_rope": True, "point_serialization": True}
+idx = accel.furthest_point_indices(points_cuda, 4096)   # pointops FPS kernel
+codes = accel.hilbert_encode(grid_cuda, depth=16)       # serialize_cuda kernel
+rope = accel.cuda_point_rope()                          # module handle (Point3DRoPE)
+```
+
+The kernels run only on CUDA tensors and are not bitwise-identical to the
+reference (FPS tie-breaking, Hilbert curve variant), so call sites choose
+explicitly; nothing switches silently based on what is installed.
 
 ## Distributed
 
