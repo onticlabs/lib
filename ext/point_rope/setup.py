@@ -15,6 +15,9 @@ setup(
     name="point_rope_cuda",
     version="0.1",
     install_requires=["torch"],
+    # without this, a non-editable install ships only the compiled _C.so and
+    # drops point_rope_cuda/__init__.py, leaving a broken half-package
+    packages=["point_rope_cuda"],
     ext_modules=[
         CUDAExtension(
             name="point_rope_cuda._C",
