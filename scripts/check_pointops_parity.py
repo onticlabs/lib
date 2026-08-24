@@ -3,7 +3,6 @@
 Measures, on a live GPU, how close the implementations actually are:
 
   * Morton / Hilbert — exact value equality over random + edge-case grids
-  * hilbert_encode_approx — divergence rate vs the exact kernel
   * FPS — fraction of trials with identical index sequences, and the quality
     gap (max min-distance spread) when they differ
   * 3D RoPE — max abs / rel error of the fused kernel vs the torch module
@@ -53,16 +52,7 @@ def check_serialization():
         h_eq = torch.equal(
             hilbert_encode(grid, depth=depth), ser.hilbert_encode(grid32, depth).to(torch.int64)
         )
-        approx = ser.hilbert_encode_approx(grid32, depth).to(torch.int64)
-        exact = ser.hilbert_encode(grid32, depth).to(torch.int64)
-        div = (approx != exact).float().mean().item()
-        o_eq = torch.equal(
-            torch.argsort(approx, stable=True), torch.argsort(exact, stable=True)
-        )
-        print(
-            f"  depth={depth:2d}: morton exact={m_eq}  hilbert exact={h_eq}  "
-            f"| approx-kernel: {div:6.2%} values differ, same order={o_eq}"
-        )
+        print(f"  depth={depth:2d}: morton exact={m_eq}  hilbert exact={h_eq}")
 
 
 def check_fps():

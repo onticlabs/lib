@@ -12,7 +12,7 @@ from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 here = os.path.dirname(os.path.abspath(__file__))
 sources = [
     os.path.join(here, f)
-    for f in ("bindings.cpp", "hilbert_cuda.cu", "hilbert_cuda_approx.cu", "morton_cuda.cu")
+    for f in ("bindings.cpp", "hilbert_cuda.cu", "morton_cuda.cu")
 ]
 
 # Architectures we actually run on: A40 (sm_86), A100 (sm_80), H100 (sm_90),

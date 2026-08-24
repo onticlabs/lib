@@ -12,9 +12,8 @@ Exports:
     HAS_CUDA_EXT        — bool, True if the compiled extension imported.
     morton_encode(coord)
     hilbert_encode(coord, num_bits)
-    hilbert_encode_approx(coord, num_bits)
 
-All three take a CUDA `(N, 3)` integer tensor of grid coords and return a
+Both take a CUDA `(N, 3)` integer tensor of grid coords and return a
 `(N,)` int64 tensor of codes (cast from the kernel's uint64 output). They
 encode only — decoding stays in PyTorch upstream.
 """
@@ -70,20 +69,8 @@ def hilbert_encode(coord: _torch.Tensor, num_bits: int) -> _torch.Tensor:
     return _ext.hilbert_encode(coord, int(num_bits)).to(_torch.int64)
 
 
-def hilbert_encode_approx(coord: _torch.Tensor, num_bits: int) -> _torch.Tensor:
-    """Approximate (faster) Hilbert encode. Not bit-exact vs `hilbert_encode`."""
-    if not HAS_CUDA_EXT:
-        raise ImportError(
-            f"serialize_cuda not built: {type(_IMPORT_ERROR).__name__}: {_IMPORT_ERROR}. "
-            "Run `pip install -e fwomo_3d/libs/point_serialization/` to build."
-        )
-    coord = _check_input(coord)
-    return _ext.hilbert_encode_approx(coord, int(num_bits)).to(_torch.int64)
-
-
 __all__ = [
     "HAS_CUDA_EXT",
     "morton_encode",
     "hilbert_encode",
-    "hilbert_encode_approx",
 ]

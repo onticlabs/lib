@@ -107,9 +107,7 @@ def hilbert_encode(grid_coordinates: Tensor, *, depth: int = 16) -> Tensor:
 
     ``depth`` is the bits-per-axis, matching the reference
     :func:`ontic_lib.pointops.serialization.hilbert_encode` parameter. The
-    kernel is measured bit-exact against the reference (the separate
-    ``hilbert_encode_approx`` binding is NOT — different curve, different
-    order; never mix it with reference codes).
+    kernel is measured bit-exact against the reference.
     """
     ser = _require(cuda_serialization(), "point_serialization")
     return ser.hilbert_encode(grid_coordinates, depth).to(torch.int64)

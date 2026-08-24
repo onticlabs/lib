@@ -84,9 +84,12 @@ gradients must use the torch path.
   over 200k random + edge-case coords at depths 8/12/16 — **bit-exact in
   every case**, confirming the earlier source-level transliteration proof at
   execution level.
-- **`hilbert_encode_approx`**: **100% of values differ AND the sort order
-  differs** from the exact kernel — it is a different curve, not a faster
-  equivalent. Never mix approx codes with reference/exact codes.
+- **`hilbert_encode_approx`** (since removed): measured 100% value AND order
+  divergence from the exact kernel. Analysis showed it computes a degenerate
+  parity-reflection interleave — Morton-equivalent ordering quality (within
+  ~1% on every distribution) at near-Hilbert cost, and 30% slower than plain
+  Morton at 10M points. Strictly dominated, so it was deleted; use
+  ``order="z"`` for the fast/lower-quality tier.
 - **FPS**: index sequences identical to the reference in 40/40 trials at
   N≤4096; at N=32768/K=4096, **14/20 identical** — and in every diverging
   trial the min-spread quality gap was exactly 0. So: quality-identical,
