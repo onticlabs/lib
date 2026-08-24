@@ -112,39 +112,35 @@ acc.reset()
 - `MetricsAccumulator`: a weighted running mean over per-step metric dicts —
   handy for averaging batch metrics of varying batch size over an epoch.
 
-The former `ontic_lib.image_metrics` and `ontic_lib.metrics3d` import paths
-remain available as compatibility shims.
-
 ## Geometry
 
-`ontic_lib.geometry` is convention-locked tensor geometry for 3D/4D work
-(depth and reconstruction models, world models). The conventions are pinned
-in the package docstring and every function conforms: torch-first with
-arbitrary leading batch dims, `(..., 3)` point rows with column-vector
-transforms (`x_dst = T_dst_from_src @ x_src`), camera-to-world poses,
-OpenCV camera axes (+x right, +y down, +z forward), real-first `(w, x, y, z)`
-quaternions (explicit `xyzw` converters exist), and an explicit distinction
-between pixel-space and normalized intrinsics and between camera-z depth and
-ray distance.
+The geometric packages follow the function-type split used by PyTorch3D and
+Kaolin. The conventions are pinned in the `ontic_lib` package docstring and
+every function conforms: torch-first with arbitrary leading batch dims,
+`(..., 3)` point rows with column-vector transforms
+(`x_dst = T_dst_from_src @ x_src`), camera-to-world poses, OpenCV camera axes
+(+x right, +y down, +z forward), real-first `(w, x, y, z)` quaternions
+(explicit `xyzw` converters exist), and an explicit distinction between
+pixel-space and normalized intrinsics and between camera-z depth and ray
+distance.
 
-- `geometry.rotations` — differentiable SO(3) conversions: matrix ↔
-  quaternion (wxyz/xyzw), 6D, Procrustes (9D), generic representation
-  helpers, rotation-vector accumulation.
-- `geometry.transforms` — homogeneous SE(3)/Sim(3) ops: homogenize, apply,
-  invert, transform points/vectors/cameras.
-- `geometry.cameras` — pinhole intrinsics (normalize/denormalize/resize),
-  project/unproject, image grids, world rays, world-space pixel size.
-- `geometry.alignment` — Umeyama-style SE(3)/Sim(3) alignment of camera
-  trajectories and point sets, anchor transforms.
-- `geometry.pointclouds` — `PointCloud` container plus AABB crop, voxel
-  pooling, furthest-point sampling, space-filling-curve striding,
-  depth-views → point-cloud construction.
-- `geometry.space_filling` — Morton and Hilbert codes for integer grids
-  (vendored kernels in `_z_order` / `_hilbert`).
-- `geometry.gaussians` — covariance construction for anisotropic 3D
-  Gaussians (splatting heads).
-- `geometry.spherical_harmonics` — rotation of real-SH coefficient bands
-  (requires the `e3nn` extra: `pip install ontic-lib[e3nn]`).
+- `transforms` — SO(3) representation conversions (`transforms.rotations`,
+  RoMa-backed: matrix ↔ quaternion wxyz/xyzw, 6D, Procrustes, generic
+  representation helpers, rotation-vector accumulation) and homogeneous
+  SE(3)/Sim(3) ops (`transforms.rigid`: homogenize, apply, invert, transform
+  points/vectors/cameras).
+- `camera` — standalone pinhole cameras: `camera.intrinsics`
+  (normalize/denormalize/resize), `camera.projection` (project/unproject,
+  image grids), `camera.rays` (world rays, world-space pixel size).
+- `pointops` — batched tensor ops: `pointops.sampling` (voxel pooling, furthest-point
+  sampling, space-filling-curve striding), `pointops.serialization` (Morton and
+  Hilbert codes for integer grids), `pointops.alignment` (Umeyama-style
+  SE(3)/Sim(3) alignment of camera trajectories and point sets),
+  `pointops.pointcloud` (`PointCloud` container, AABB crop, depth-views →
+  point-cloud construction).
+- `splats` — 3D Gaussian-splatting helpers: `splats.gaussians` (covariance
+  construction) and `splats.sh` (rotation of real-SH coefficient bands;
+  requires the `e3nn` extra: `pip install ontic-lib[e3nn]`).
 
 ## Depth
 
@@ -154,6 +150,23 @@ ray distance.
   predicted depth against a reference, and rescaling depth into a target
   camera-pose frame — the core of metric alignment for affine/scale-invariant
   depth backbones.
+
+## CUDA extensions (optional)
+
+`ext/` vendors three separately-installable CUDA extension packages used by
+point-transformer-style models: `pointops` (KNN/ball query, grouping,
+sampling, aggregation kernels), `point_rope` (rotary position embeddings for
+point tokens, with a pure-torch fallback module), and `point_serialization`
+(GPU Morton/Hilbert encoding). They need `nvcc` and an installed `torch`:
+
+```bash
+./scripts/install_cuda_ext.sh               # all three
+./scripts/install_cuda_ext.sh pointops      # one at a time
+```
+
+The core library never imports them: `ontic_lib.pointops` is the pure-torch
+implementation of the same operations, and the `ext/pointops` CUDA kernels are
+its accelerated counterpart for consumers that need the speed.
 
 ## Distributed
 

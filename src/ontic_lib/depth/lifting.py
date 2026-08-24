@@ -7,7 +7,8 @@ from typing import Literal
 import torch
 from torch import Tensor
 
-from ..geometry.cameras import sample_image_grid, world_rays
+from ..camera.projection import sample_image_grid
+from ..camera.rays import world_rays
 
 DepthType = Literal["z", "ray"]
 

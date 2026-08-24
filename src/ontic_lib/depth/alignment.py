@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 from torch import Tensor
 
-from ..geometry.alignment import align_camera_poses_sim3, clamp_scale
+from ..pointops.alignment import align_camera_poses_sim3, clamp_scale
 
 
 def fit_depth_scale(

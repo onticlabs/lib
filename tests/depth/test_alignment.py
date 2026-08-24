@@ -4,8 +4,8 @@ import pytest
 import torch
 
 from ontic_lib.depth import alignment as D
-from ontic_lib.geometry.alignment import align_cameras_sim3
-from ontic_lib.geometry.rotations import rotation_6d_to_matrix
+from ontic_lib.pointops.alignment import align_cameras_sim3
+from ontic_lib.transforms.rotations import rotation_6d_to_matrix
 
 
 def _random_rotation(generator):

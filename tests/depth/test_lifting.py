@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from ontic_lib.geometry import cameras as C
+from ontic_lib import camera as C
 from ontic_lib.depth import lifting as L
 
 
