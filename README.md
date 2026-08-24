@@ -144,7 +144,12 @@ distance.
   pinhole views through gsplat, taking package-convention cameras — c2w poses
   + normalized intrinsics — with SH or post-activation colors, per-view
   near/far grouped into batched calls, Gaussian masking, and RGB/depth/alpha
-  outputs; `gsplat` extra, CUDA only).
+  outputs; `gsplat` extra, CUDA only). `rasterizer="cute"` switches to
+  `splats.cute` — a CuTeDSL forward kernel with gsplat's exact CUDA backward
+  that batches all (scene, camera) pairs into one launch per stage; its
+  `batched_render` also takes `B` scenes x `C` cameras directly. `cute` extra
+  (gsplat + nvidia-cutlass-dsl); post-activation colors + uniform near/far
+  only; needs a CUDA-13-era driver.
 
 ## Depth
 

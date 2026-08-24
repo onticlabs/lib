@@ -60,6 +60,7 @@ def render_gaussians(
     background: Tensor | None = None,
     mask: Tensor | None = None,
     render_mode: RenderMode = "RGB+D",
+    rasterizer: Literal["gsplat", "cute"] = "gsplat",
 ) -> RenderOutput:
     """Rasterize one set of 3D Gaussians into ``V`` views.
 
@@ -82,12 +83,18 @@ def render_gaussians(
         mask: optional ``(G,)`` bool — render only the selected Gaussians.
         render_mode: gsplat render mode; ``"...D"`` = accumulated z-depth,
             ``"...ED"`` = alpha-normalized expected depth.
+        rasterizer: ``"gsplat"`` (reference) or ``"cute"`` — the CuTeDSL
+            batched pipeline (:mod:`ontic_lib.splats.cute`): one launch per
+            stage for all views, gsplat-exact backward, forward identical
+            within float noise (~3e-7 rel). Requires the ``cute`` extra and
+            supports only post-activation ``colors`` with uniform near/far.
     """
     if (sh_coefficients is None) == (colors is None):
         raise ValueError("provide exactly one of sh_coefficients or colors")
     if means.ndim != 2 or means.shape[-1] != 3:
         raise ValueError(f"expected (G, 3) means, got {tuple(means.shape)}")
-    rasterization = _gsplat()
+    if rasterizer not in ("gsplat", "cute"):
+        raise ValueError(f"rasterizer must be 'gsplat' or 'cute', got {rasterizer!r}")
     views = camera_to_world.shape[0]
     height, width = image_size
 
@@ -117,6 +124,30 @@ def render_gaussians(
     viewmats = invert_rigid_transform(camera_to_world)
     pixel_intrinsics = denormalize_intrinsics(intrinsics_normalized, image_size)
 
+    if rasterizer == "cute":
+        if sh_coefficients is not None:
+            raise ValueError("rasterizer='cute' supports only post-activation colors, not SH")
+        if len(set(near_list)) != 1 or len(set(far_list)) != 1:
+            raise ValueError("rasterizer='cute' requires uniform near/far across views")
+        from .cute import _cutlass, batched_render
+
+        _cutlass()  # fail fast with the install hint before any gsplat work
+        view_colors = colors.unsqueeze(0) if colors.ndim == 3 else colors.expand(views, -1, -1)
+        if view_colors.ndim == 3:
+            view_colors = view_colors.unsqueeze(0)
+        color, alpha = batched_render(
+            means.unsqueeze(0), covariances.unsqueeze(0), opacities.unsqueeze(0),
+            view_colors, viewmats.unsqueeze(0), pixel_intrinsics.unsqueeze(0),
+            near_list[0], far_list[0], background.unsqueeze(0),
+            width, height, render_mode=render_mode,
+        )
+        color = color[0].permute(0, 3, 1, 2)
+        alpha = alpha[0].permute(0, 3, 1, 2)
+        if render_mode in ("RGB+D", "RGB+ED"):
+            return RenderOutput(rgb=color[:, :-1], alpha=alpha, depth=color[:, -1:])
+        return RenderOutput(rgb=color, alpha=alpha, depth=None)
+
+    rasterization = _gsplat()
     rendered: list[Tensor] = []
     alphas: list[Tensor] = []
     start = 0
