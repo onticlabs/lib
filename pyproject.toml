@@ -15,6 +15,7 @@ dependencies = [
 wandb = ["wandb>=0.17"]
 torch = []  # compatibility alias; torch is now a core dependency
 e3nn = ["e3nn>=0.5"]  # only needed for splats.sh spherical-harmonic rotation (wigner_D)
+gsplat = ["gsplat>=1.4"]  # only needed for splats.rendering (CUDA rasterization)
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6", "torch>=2.4"]

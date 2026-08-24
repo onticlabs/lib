@@ -139,8 +139,12 @@ distance.
   `pointops.pointcloud` (`PointCloud` container, AABB crop, depth-views →
   point-cloud construction).
 - `splats` — 3D Gaussian-splatting helpers: `splats.gaussians` (covariance
-  construction) and `splats.sh` (rotation of real-SH coefficient bands;
-  requires the `e3nn` extra: `pip install ontic-lib[e3nn]`).
+  construction), `splats.sh` (rotation of real-SH coefficient bands; `e3nn`
+  extra), and `splats.rendering` (`render_gaussians`: one scene into `V`
+  pinhole views through gsplat, taking package-convention cameras — c2w poses
+  + normalized intrinsics — with SH or post-activation colors, per-view
+  near/far grouped into batched calls, Gaussian masking, and RGB/depth/alpha
+  outputs; `gsplat` extra, CUDA only).
 
 ## Depth
 
