@@ -273,10 +273,13 @@ def batched_render(
     )
     isect_offsets = isect_offset_encode(isect_ids, images, tiles_w, tiles_h)  # [I, TH, TW]
 
+    # .contiguous() matters: broadcast/expanded inputs reshape into stride-0
+    # views, and gsplat's backward kernel rejects non-contiguous saved tensors
     rc, ra = cute_rasterize(
         means2d.reshape(images, N, 2), conics.reshape(images, N, 3),
-        colors.reshape(images, N, colors.shape[-1]), opacities_bc.reshape(images, N),
-        background.reshape(images, background.shape[-1]),
+        colors.reshape(images, N, colors.shape[-1]).contiguous(),
+        opacities_bc.reshape(images, N).contiguous(),
+        background.reshape(images, background.shape[-1]).contiguous(),
         width, height, tile_size, isect_offsets, flatten_ids,
     )
 
