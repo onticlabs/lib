@@ -13,6 +13,13 @@ CUDA driver new enough for the DSL's bundled CUDA bindings (CUDA 13-era —
 newer than what torch itself needs; ``cudaErrorInsufficientDriver`` at launch
 means the driver, not the port). Ported from fwomo-3d's
 ``model/rendering/{cute_raster,cute_pipeline}.py``.
+
+Because of the no-SH regime, dispatchers that gate on it fall back to stock
+gsplat *silently*: fwomo-3d's ``GSPLAT_CUTE=1`` opt-in only takes this path
+when ``sh_degree is None`` (its ``rendering/rasterizers.py``), so an SH
+training config (e.g. ``sh_degree: 3``) renders through gsplat even with the
+env var set. Setting the flag is not proof the CuTe kernel ran — check the
+dispatch condition when benchmarking.
 """
 
 from __future__ import annotations

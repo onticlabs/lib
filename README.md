@@ -149,7 +149,9 @@ distance.
   that batches all (scene, camera) pairs into one launch per stage; its
   `batched_render` also takes `B` scenes x `C` cameras directly. `cute` extra
   (gsplat + nvidia-cutlass-dsl); post-activation colors + uniform near/far
-  only; needs a CUDA-13-era driver.
+  only (no SH — dispatchers gating on this fall back to gsplat silently, e.g.
+  fwomo-3d's `GSPLAT_CUTE=1` with an `sh_degree` config); needs a CUDA-13-era
+  driver.
 
 ## Depth
 
