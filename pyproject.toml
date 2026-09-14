@@ -13,6 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 wandb = ["wandb>=0.17"]
+olympus = ["olympus-tracker"]  # team tracker mirror; runs fine without it
 torch = []  # compatibility alias; torch is now a core dependency
 e3nn = ["e3nn>=0.5"]  # only needed for splats.sh spherical-harmonic rotation (wigner_D)
 gsplat = ["gsplat>=1.4"]  # only needed for splats.rendering (CUDA rasterization)
@@ -20,6 +21,10 @@ cute = ["gsplat>=1.4", "nvidia-cutlass-dsl>=4.0"]  # splats.cute batched CuTeDSL
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6", "torch>=2.4"]
+
+[tool.uv.sources]
+# Not on PyPI: the tracker lives in the team repo (same pattern as SSH clones).
+olympus-tracker = { git = "ssh://git@github.com/onticlabs/olympus.git" }
 
 [build-system]
 requires = ["hatchling"]
