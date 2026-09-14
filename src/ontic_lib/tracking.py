@@ -1,25 +1,42 @@
 from __future__ import annotations
 
+import _thread
 import json
 import os
+import sys
+import threading
 import time
+import urllib.request
+from collections import deque
 from pathlib import Path
+
+_OLYMPUS_STOP_POLL_S = 5.0
+_OLYMPUS_TAIL_FLUSH_S = 15.0
+_OLYMPUS_TAIL_LINES = 200
+_OLYMPUS_DOC_MAX_BYTES = 1_000_000
+_OLYMPUS_DOC_MAX_FILES = 10
 
 
 class Tracker:
     """Appends one JSON line per log() call to output/metrics.jsonl — the durable,
     plain-text metrics record that ships to B2 with the job — and mirrors to W&B
-    when configured (best-effort, never fatal). Flushed per line so the bootstrap's
-    incremental sync sees fresh data; fsync coalesced to >=1 s. After a hard kill
-    the final line may be truncated — read_metrics() skips it; any byte prefix of
-    the file is a valid record set."""
+    and Olympus when configured (best-effort, never fatal). Flushed per line so the
+    bootstrap's incremental sync sees fresh data; fsync coalesced to >=1 s. After a
+    hard kill the final line may be truncated — read_metrics() skips it; any byte
+    prefix of the file is a valid record set.
+
+    Usable as a context manager: an exception leaving the `with` block declares the
+    Olympus run failed before re-raising."""
 
     _FSYNC_EVERY_S = 1.0
 
-    def __init__(self, fh, wandb_run):
+    def __init__(self, fh, wandb_run, olympus_mirror=None, out: Path | None = None):
         self._fh = fh
         self._wandb = wandb_run
+        self._olympus = olympus_mirror
+        self._out = out if out is not None else Path(fh.name).parent
         self._last_fsync = 0.0
+        self._summary: dict = {}
 
     def log(self, metrics: dict, step: int | None = None) -> None:
         rec = {"step": step, "ts": time.time(), **metrics}
@@ -29,23 +46,49 @@ class Tracker:
         if now - self._last_fsync >= self._FSYNC_EVERY_S:
             os.fsync(self._fh.fileno())
             self._last_fsync = now
+        for key, value in metrics.items():
+            if isinstance(value, (int, float, str)):
+                self._summary[key] = value
         if self._wandb is not None:
             try:
                 self._wandb.log(metrics, step=step)
             except Exception:
                 pass
+        if self._olympus is not None:
+            self._olympus.log(metrics, step=step)
 
-    def finish(self) -> None:
+    def finish(self, failed: bool = False) -> None:
         try:
-            self._fh.flush()
-            os.fsync(self._fh.fileno())
+            self._write_summary()
         finally:
-            self._fh.close()
+            try:
+                self._fh.flush()
+                os.fsync(self._fh.fileno())
+            finally:
+                self._fh.close()
         if self._wandb is not None:
             try:
                 self._wandb.finish()
             except Exception:
                 pass
+        if self._olympus is not None:
+            self._olympus.finish(failed=failed)
+
+    def _write_summary(self) -> None:
+        """output/metrics.json: the final value of every scalar metric, for ontic's
+        summary promotion. Derived purely from what log() saw; best-effort."""
+        try:
+            path = self._out / "metrics.json"
+            path.write_text(json.dumps(self._summary, indent=2) + "\n", encoding="utf-8")
+        except Exception:
+            pass
+
+    def __enter__(self) -> Tracker:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        self.finish(failed=exc_type is not None)
+        return False
 
 
 def read_metrics(path) -> list[dict]:
@@ -78,6 +121,317 @@ def _maybe_wandb(project: str, config: dict | None):
         return None
 
 
+def _olympus_notice(what: str) -> None:
+    print(f"[ontic-lib] olympus mirror: {what}", file=sys.stderr)
+
+
+def _post_json(url: str, payload: dict, headers: dict) -> object:
+    """One POST of a JSON body; returns the decoded JSON response. Raises on any
+    transport or decode problem — callers swallow."""
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", **headers},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=4) as resp:
+        return json.loads(resp.read().decode())
+
+
+class _TeeStream:
+    """Pass-through wrapper over a real stream that also feeds complete lines to a
+    sink. The wrapped stream always gets the bytes first; the sink can never fail
+    the write."""
+
+    def __init__(self, orig, sink):
+        self._orig = orig
+        self._sink = sink
+        self._partial = ""
+
+    def write(self, text):
+        n = self._orig.write(text)
+        try:
+            self._partial += str(text)
+            while "\n" in self._partial:
+                line, self._partial = self._partial.split("\n", 1)
+                if line.strip():
+                    self._sink(line)
+        except Exception:
+            pass
+        return n
+
+    def flush(self):
+        self._orig.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._orig, name)
+
+
+class _OlympusMirror:
+    """Best-effort mirror of a run to the team Olympus server. metrics.jsonl never
+    depends on it: every path here degrades to a single stderr notice. Runs its own
+    dashboard-stop poller (the SDK's is disabled via OLYMPUS_DISABLE_REMOTE_STOP)
+    so a mode="stop" can drop the ontic terminate marker before interrupting."""
+
+    def __init__(self, run, out: Path):
+        self._run = run
+        self._out = out
+        self._project = os.environ.get("ONTIC_OLYMPUS_PROJECT", "")
+        self._run_name = os.environ.get("ONTIC_OLYMPUS_RUN", "")
+        self._server = (os.environ.get("OLYMPUS_SERVER_URL") or "").rstrip("/")
+        self._api_key = os.environ.get("OLYMPUS_API_KEY")
+        self._workspace = os.environ.get("OLYMPUS_WORKSPACE")
+        self._shutdown = threading.Event()
+        self._lock = threading.Lock()
+        self._tail_lines: deque[str] = deque(maxlen=_OLYMPUS_TAIL_LINES)
+        self._orig_stdout = None
+        self._orig_stderr = None
+        self._prev_excepthook = None
+        self._log_warned = False
+        self._finished = False
+        self._failed_declared = False
+
+    # -- lifecycle ---------------------------------------------------------
+
+    def start(self, olympus_module) -> None:
+        self._upload_docs(olympus_module)
+        if os.environ.get("ONTIC_LIB_NO_LOG_TAIL") != "1":
+            self._start_tail()
+        if self._server:
+            thread = threading.Thread(
+                target=self._poll_loop, name="ontic-olympus-stop-poll", daemon=True
+            )
+            thread.start()
+        self._install_excepthook()
+
+    def log(self, metrics: dict, step: int | None = None) -> None:
+        try:
+            self._run.log(dict(metrics), step=step)
+        except Exception as e:
+            if not self._log_warned:
+                self._log_warned = True
+                _olympus_notice(f"log failed ({e}); metrics.jsonl is unaffected")
+
+    def finish(self, failed: bool = False) -> None:
+        if self._finished:
+            return
+        self._finished = True
+        self._shutdown.set()
+        self._stop_tail()
+        try:
+            self._run.finish()
+        except Exception as e:
+            _olympus_notice(f"finish failed ({e}); metrics.jsonl is unaffected")
+        if failed:
+            self._declare_failed()
+        self._restore_excepthook()
+
+    def _declare_failed(self) -> None:
+        """The SDK only ever declares finished; a crashed run must say failed.
+        Sent after finish() so the flush happens first and the final word wins."""
+        if self._failed_declared:
+            return
+        self._failed_declared = True
+        try:
+            self._run._declare_status("failed", send=True)
+        except Exception:
+            pass
+
+    # -- uncaught exceptions -----------------------------------------------
+
+    def _install_excepthook(self) -> None:
+        prev = sys.excepthook
+        self._prev_excepthook = prev
+
+        def hook(exc_type, exc, tb):
+            try:
+                self.finish(failed=True)
+            except Exception:
+                pass
+            prev(exc_type, exc, tb)
+
+        self._hook = hook
+        sys.excepthook = hook
+
+    def _restore_excepthook(self) -> None:
+        if self._prev_excepthook is not None and sys.excepthook is getattr(
+            self, "_hook", None
+        ):
+            sys.excepthook = self._prev_excepthook
+        self._prev_excepthook = None
+
+    # -- stop poller -------------------------------------------------------
+
+    def _headers(self) -> dict:
+        headers = {}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        if self._workspace:
+            headers["x-olympus-workspace"] = self._workspace
+        headers["x-olympus-project"] = self._project
+        return headers
+
+    def _poll_loop(self) -> None:
+        while not self._shutdown.wait(_OLYMPUS_STOP_POLL_S):
+            if self._poll_once():
+                return
+
+    def _poll_once(self) -> bool:
+        """One stop-request round trip. True once a stop was acted on."""
+        try:
+            payload = _post_json(
+                f"{self._server}/api/get_run_stop_request",
+                {"project": self._project, "run": self._run_name},
+                self._headers(),
+            )
+        except Exception:
+            return False
+        answer = (
+            payload.get("data")
+            if isinstance(payload, dict) and "data" in payload
+            else payload
+        )
+        if isinstance(answer, dict):
+            stop = answer.get("stop") is True
+            mode = answer.get("mode") or "stop"
+        else:
+            stop = answer is True
+            mode = "stop"
+        if not stop:
+            return False
+        if mode == "stop":
+            try:
+                marker = self._out / ".ontic" / "terminate-requested"
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.touch()
+            except Exception:
+                pass
+        _olympus_notice(
+            f"dashboard requested mode={mode} for run '{self._run_name}'; "
+            "interrupting the main thread"
+        )
+        try:
+            _thread.interrupt_main()
+        except Exception:
+            pass
+        return True
+
+    # -- log tail ----------------------------------------------------------
+
+    def _start_tail(self) -> None:
+        self._orig_stdout = sys.stdout
+        self._orig_stderr = sys.stderr
+        sys.stdout = _TeeStream(self._orig_stdout, self._tail_sink)
+        sys.stderr = _TeeStream(self._orig_stderr, self._tail_sink)
+        thread = threading.Thread(
+            target=self._tail_loop, name="ontic-olympus-log-tail", daemon=True
+        )
+        thread.start()
+
+    def _tail_sink(self, line: str) -> None:
+        with self._lock:
+            self._tail_lines.append(line)
+
+    def _tail_loop(self) -> None:
+        while not self._shutdown.wait(_OLYMPUS_TAIL_FLUSH_S):
+            self._flush_tail()
+
+    def _flush_tail(self) -> None:
+        with self._lock:
+            lines = list(self._tail_lines)
+            self._tail_lines.clear()
+        for line in lines:
+            try:
+                self._run.log_system({"console": line})
+            except Exception:
+                return
+
+    def _stop_tail(self) -> None:
+        if self._orig_stdout is not None and isinstance(sys.stdout, _TeeStream):
+            sys.stdout = self._orig_stdout
+        if self._orig_stderr is not None and isinstance(sys.stderr, _TeeStream):
+            sys.stderr = self._orig_stderr
+        self._orig_stdout = None
+        self._orig_stderr = None
+        self._flush_tail()
+
+    # -- experiment docs ---------------------------------------------------
+
+    def _upload_docs(self, olympus_module) -> None:
+        """Committed experiment docs sitting in the job dir, onto the run's files."""
+        try:
+            cwd = Path.cwd()
+            candidates = [cwd / "README.md"]
+            candidates += sorted(cwd.glob("RESULTS-*.md"))
+            candidates += sorted(cwd.glob("PREREG-*.md"))
+            count = 0
+            for path in candidates:
+                if count >= _OLYMPUS_DOC_MAX_FILES:
+                    break
+                if not path.is_file() or path.stat().st_size > _OLYMPUS_DOC_MAX_BYTES:
+                    continue
+                try:
+                    olympus_module.save(str(path))
+                    count += 1
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+
+_OLYMPUS_CONFIG_ENV = (
+    ("job_id", "ONTIC_JOB_ID"),
+    ("experiment", "ONTIC_EXPERIMENT"),
+    ("experiment_sha", "ONTIC_EXPERIMENT_SHA"),
+    ("attempt", "ONTIC_ATTEMPT"),
+    ("git_parents", "ONTIC_GIT_PARENTS"),
+    ("git_subject", "ONTIC_GIT_SUBJECT"),
+    ("git_branch", "ONTIC_GIT_BRANCH"),
+)
+
+
+def _olympus_resuming() -> bool:
+    if os.environ.get("ONTIC_RESUME") == "1":
+        return True
+    try:
+        return int(os.environ.get("ONTIC_ATTEMPT", "1")) > 1
+    except ValueError:
+        return False
+
+
+def _maybe_olympus(config: dict | None, out: Path):
+    if not (
+        os.environ.get("ONTIC_OLYMPUS_PROJECT") and os.environ.get("ONTIC_OLYMPUS_RUN")
+    ):
+        return None
+    os.environ["OLYMPUS_DISABLE_REMOTE_STOP"] = "1"
+    try:
+        import olympus
+    except Exception:
+        _olympus_notice("olympus package not importable; mirror disabled")
+        return None
+    try:
+        cfg: dict = {}
+        for key, env in _OLYMPUS_CONFIG_ENV:
+            value = os.environ.get(env)
+            if value:
+                cfg[key] = value
+        cfg.update(config or {})
+        run = olympus.init(
+            project=os.environ["ONTIC_OLYMPUS_PROJECT"],
+            name=os.environ["ONTIC_OLYMPUS_RUN"],
+            config=cfg,
+            resume="allow" if _olympus_resuming() else "never",
+            embed=False,
+        )
+        mirror = _OlympusMirror(run, out)
+        mirror.start(olympus)
+        return mirror
+    except Exception as e:
+        _olympus_notice(f"init failed ({e}); mirror disabled")
+        return None
+
+
 def init(project: str, config: dict | None = None) -> Tracker:
     out = Path.cwd() / "output"
     out.mkdir(parents=True, exist_ok=True)
@@ -85,4 +439,5 @@ def init(project: str, config: dict | None = None) -> Tracker:
     fh.write(json.dumps({"_type": "config", "project": project,
                          "config": config or {}, "ts": time.time()}) + "\n")
     fh.flush()
-    return Tracker(fh, _maybe_wandb(project, config))
+    return Tracker(fh, _maybe_wandb(project, config),
+                   olympus_mirror=_maybe_olympus(config, out), out=out)
