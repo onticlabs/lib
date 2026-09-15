@@ -180,12 +180,50 @@ def test_olympus_omits_absent_env_keys(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     _olympus_env(monkeypatch, ONTIC_JOB_ID="j-1")
     for env in ("ONTIC_EXPERIMENT", "ONTIC_EXPERIMENT_SHA", "ONTIC_ATTEMPT",
+                "ONTIC_DESCRIPTION", "ONTIC_TAGS", "ONTIC_DEPS",
                 "ONTIC_GIT_PARENTS", "ONTIC_GIT_SUBJECT", "ONTIC_GIT_BRANCH",
                 "ONTIC_RESUME"):
         monkeypatch.delenv(env, raising=False)
     mod, _ = _fake_olympus(monkeypatch)
     t = tracking.init("p")
     assert mod.init_calls[0]["config"] == {"job_id": "j-1"}
+    t.finish()
+
+
+def test_olympus_config_carries_the_run_context_env(monkeypatch, tmp_path):
+    """The importer-contract keys: description/tags/deps land verbatim, exactly as
+    the launcher formatted them (tags ', '-joined, deps space-separated job ids)."""
+    monkeypatch.chdir(tmp_path)
+    _olympus_env(
+        monkeypatch,
+        ONTIC_JOB_ID="j-7",
+        ONTIC_DESCRIPTION="Sweep the learning rate; wider net",
+        ONTIC_TAGS="lr, sweep",
+        ONTIC_DEPS="u1 u2 u3",
+    )
+    mod, _ = _fake_olympus(monkeypatch)
+    t = tracking.init("p")
+    cfg = mod.init_calls[0]["config"]
+    assert cfg["description"] == "Sweep the learning rate; wider net"
+    assert cfg["tags"] == "lr, sweep"
+    assert cfg["deps"] == "u1 u2 u3"
+    t.finish()
+
+
+def test_olympus_experiment_config_wins_over_run_context_env(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _olympus_env(
+        monkeypatch,
+        ONTIC_DESCRIPTION="from the launcher",
+        ONTIC_TAGS="lr",
+        ONTIC_DEPS="u1",
+    )
+    mod, _ = _fake_olympus(monkeypatch)
+    t = tracking.init("p", {"description": "the experiment's own", "deps": "mine"})
+    cfg = mod.init_calls[0]["config"]
+    assert cfg["description"] == "the experiment's own"
+    assert cfg["deps"] == "mine"
+    assert cfg["tags"] == "lr"  # untouched keys still come from the env
     t.finish()
 
 
