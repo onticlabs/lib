@@ -239,6 +239,107 @@ def test_exception_in_with_block_declares_failed(monkeypatch, tmp_path):
     assert (tmp_path / "output" / "metrics.json").is_file()
 
 
+def _capture_error_posts(monkeypatch, run, answer=None):
+    """Record set_run_error posts and failed declarations on one timeline."""
+    events = []
+
+    def post(url, payload, headers, timeout=4.0):
+        events.append(("post", url, payload, headers, timeout))
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(tracking, "_post_json", post)
+    orig = run._declare_status
+
+    def declare(status, send=False):
+        events.append(("status", status))
+        orig(status, send)
+
+    run._declare_status = declare
+    return events
+
+
+def test_with_block_failure_posts_traceback_before_failed(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _olympus_env(
+        monkeypatch,
+        OLYMPUS_SERVER_URL="http://olympus.test",
+        OLYMPUS_API_KEY="secret",
+        OLYMPUS_WORKSPACE="ontic",
+    )
+    _, run = _fake_olympus(monkeypatch)
+    events = _capture_error_posts(monkeypatch, run, answer={"data": "ok"})
+    with pytest.raises(RuntimeError):
+        with tracking.init("p") as t:
+            t.log({"x": 1})
+            raise RuntimeError("boom")
+    posts = [e for e in events if e[0] == "post" and "set_run_error" in e[1]]
+    assert len(posts) == 1
+    _, url, payload, headers, timeout = posts[0]
+    assert url == "http://olympus.test/api/set_run_error"
+    assert payload["project"] == "team-proj" and payload["run"] == "exp-run-3"
+    assert "Traceback (most recent call last)" in payload["text"]
+    assert payload["text"].rstrip().endswith("RuntimeError: boom")
+    assert headers["Authorization"] == "Bearer secret"
+    assert headers["x-olympus-workspace"] == "ontic"
+    assert timeout == 3.0
+    # the traceback reaches the server before the failed declaration
+    assert events.index(posts[0]) < events.index(("status", "failed"))
+    assert ("failed", True) in run.statuses
+    # the durable local record carries the same text
+    assert (tmp_path / "output" / "error.txt").read_text() == payload["text"]
+
+
+def test_excepthook_posts_traceback_once(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _olympus_env(monkeypatch, OLYMPUS_SERVER_URL="http://olympus.test")
+    _, run = _fake_olympus(monkeypatch)
+    events = _capture_error_posts(monkeypatch, run, answer={"data": "ok"})
+    monkeypatch.setattr(sys, "excepthook", lambda *a: None)
+    tracking.init("p")
+    hook = sys.excepthook  # the mirror's installed hook
+    try:
+        raise RuntimeError("boom")
+    except RuntimeError:
+        info = sys.exc_info()
+    hook(*info)
+    hook(*info)  # exit path and excepthook can both fire; only one send
+    posts = [e for e in events if e[0] == "post" and "set_run_error" in e[1]]
+    assert len(posts) == 1
+    assert posts[0][2]["text"].rstrip().endswith("RuntimeError: boom")
+    assert run.statuses.count(("failed", True)) == 1
+    text = (tmp_path / "output" / "error.txt").read_text()
+    assert text.count("RuntimeError: boom") == 1
+
+
+def test_error_post_server_down_never_raises(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    _olympus_env(monkeypatch, OLYMPUS_SERVER_URL="http://olympus.test")
+    _, run = _fake_olympus(monkeypatch)
+    _capture_error_posts(monkeypatch, run, answer=ConnectionError("down"))
+    with pytest.raises(RuntimeError):  # only the run's own exception
+        with tracking.init("p"):
+            raise RuntimeError("boom")
+    assert ("failed", True) in run.statuses  # still declared failed
+    assert "set_run_error failed" in capsys.readouterr().err
+    # error.txt is written even when the server is unreachable
+    assert "RuntimeError: boom" in (tmp_path / "output" / "error.txt").read_text()
+
+
+def test_error_text_truncated_to_last_64kb(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _olympus_env(monkeypatch, OLYMPUS_SERVER_URL="http://olympus.test")
+    _, run = _fake_olympus(monkeypatch)
+    events = _capture_error_posts(monkeypatch, run, answer={"data": "ok"})
+    with pytest.raises(RuntimeError):
+        with tracking.init("p"):
+            raise RuntimeError("x" * 200_000 + " THE-END")
+    payload = next(e[2] for e in events if e[0] == "post" and "set_run_error" in e[1])
+    assert len(payload["text"].encode()) <= tracking._OLYMPUS_ERROR_MAX_BYTES
+    assert payload["text"].rstrip().endswith("THE-END")  # the tail survives
+
+
 def test_olympus_init_failure_never_fatal(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     _olympus_env(monkeypatch)

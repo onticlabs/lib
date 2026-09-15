@@ -6,6 +6,7 @@ import os
 import sys
 import threading
 import time
+import traceback
 import urllib.request
 from collections import deque
 from pathlib import Path
@@ -15,6 +16,7 @@ _OLYMPUS_TAIL_FLUSH_S = 15.0
 _OLYMPUS_TAIL_LINES = 200
 _OLYMPUS_DOC_MAX_BYTES = 1_000_000
 _OLYMPUS_DOC_MAX_FILES = 10
+_OLYMPUS_ERROR_MAX_BYTES = 64 * 1024
 
 
 class Tracker:
@@ -87,6 +89,8 @@ class Tracker:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool:
+        if exc_type is not None and self._olympus is not None:
+            self._olympus.report_error(exc_type, exc, tb)
         self.finish(failed=exc_type is not None)
         return False
 
@@ -125,7 +129,7 @@ def _olympus_notice(what: str) -> None:
     print(f"[ontic-lib] olympus mirror: {what}", file=sys.stderr)
 
 
-def _post_json(url: str, payload: dict, headers: dict) -> object:
+def _post_json(url: str, payload: dict, headers: dict, timeout: float = 4.0) -> object:
     """One POST of a JSON body; returns the decoded JSON response. Raises on any
     transport or decode problem — callers swallow."""
     req = urllib.request.Request(
@@ -134,7 +138,7 @@ def _post_json(url: str, payload: dict, headers: dict) -> object:
         headers={"Content-Type": "application/json", **headers},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=4) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode())
 
 
@@ -190,6 +194,7 @@ class _OlympusMirror:
         self._log_warned = False
         self._finished = False
         self._failed_declared = False
+        self._error_sent = False
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -226,6 +231,44 @@ class _OlympusMirror:
             self._declare_failed()
         self._restore_excepthook()
 
+    def report_error(self, exc_type, exc, tb) -> None:
+        """Ship the failure traceback before the failed declaration: appended to
+        output/error.txt so the durable B2 record carries it, and POSTed to
+        set_run_error so the dashboard can show why. Best-effort, once per run
+        (the with-block exit and the excepthook can both fire for the same
+        exception)."""
+        if self._error_sent:
+            return
+        self._error_sent = True
+        try:
+            text = "".join(traceback.format_exception(exc_type, exc, tb))
+        except Exception:
+            return
+        data = text.encode("utf-8", errors="replace")
+        if len(data) > _OLYMPUS_ERROR_MAX_BYTES:
+            text = data[-_OLYMPUS_ERROR_MAX_BYTES:].decode("utf-8", errors="ignore")
+        try:
+            with (self._out / "error.txt").open("a", encoding="utf-8") as fh:
+                fh.write(text)
+        except Exception:
+            pass
+        if not self._server:
+            return
+        try:
+            payload = _post_json(
+                f"{self._server}/api/set_run_error",
+                {"project": self._project, "run": self._run_name, "text": text},
+                self._headers(),
+                timeout=3.0,
+            )
+        except Exception as e:
+            _olympus_notice(f"set_run_error failed ({e}); output/error.txt has the traceback")
+            return
+        if isinstance(payload, dict) and payload.get("error"):
+            _olympus_notice(
+                f"set_run_error rejected ({payload['error']}); output/error.txt has the traceback"
+            )
+
     def _declare_failed(self) -> None:
         """The SDK only ever declares finished; a crashed run must say failed.
         Sent after finish() so the flush happens first and the final word wins."""
@@ -244,6 +287,10 @@ class _OlympusMirror:
         self._prev_excepthook = prev
 
         def hook(exc_type, exc, tb):
+            try:
+                self.report_error(exc_type, exc, tb)
+            except Exception:
+                pass
             try:
                 self.finish(failed=True)
             except Exception:
