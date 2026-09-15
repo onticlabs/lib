@@ -426,11 +426,18 @@ class _OlympusMirror:
             pass
 
 
+# One key per env var, verbatim: the launcher already formats the values (tags
+# ", "-joined, deps space-separated producer job ids), and the backfill importer
+# writes the same `description`/`tags`/`deps` keys, so live and imported runs
+# present one config contract to the dashboard and query_runs.
 _OLYMPUS_CONFIG_ENV = (
     ("job_id", "ONTIC_JOB_ID"),
     ("experiment", "ONTIC_EXPERIMENT"),
     ("experiment_sha", "ONTIC_EXPERIMENT_SHA"),
     ("attempt", "ONTIC_ATTEMPT"),
+    ("description", "ONTIC_DESCRIPTION"),
+    ("tags", "ONTIC_TAGS"),
+    ("deps", "ONTIC_DEPS"),
     ("git_parents", "ONTIC_GIT_PARENTS"),
     ("git_subject", "ONTIC_GIT_SUBJECT"),
     ("git_branch", "ONTIC_GIT_BRANCH"),
