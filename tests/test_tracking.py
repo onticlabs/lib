@@ -1,5 +1,8 @@
+import collections
 import json
 import sys
+import threading
+import time
 import types
 
 import pytest
@@ -522,3 +525,88 @@ def test_experiment_docs_uploaded_with_caps(monkeypatch, tmp_path):
     t.finish()
     names = {tracking.Path(p).name for p in mod.saved}
     assert names == {"README.md", "RESULTS-01.md", "PREREG-a.md"}
+
+
+# --- hot path: the mirror must never block the training thread --------------
+
+
+def test_kill_switch_disables_mirror(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _olympus_env(monkeypatch)
+    monkeypatch.setenv("ONTIC_LIB_NO_OLYMPUS", "1")
+    mod, _ = _fake_olympus(monkeypatch)
+    t = tracking.init("p")
+    t.log({"x": 1})
+    t.finish()
+    assert t._olympus is None
+    assert mod.init_calls == []
+    assert (tmp_path / "output" / "metrics.jsonl").is_file()
+
+
+def test_queue_drops_oldest_with_single_notice(monkeypatch, tmp_path, capsys):
+    _olympus_env(monkeypatch)
+    out = tmp_path / "output"
+    out.mkdir(parents=True, exist_ok=True)
+    mirror = tracking._OlympusMirror(None, {}, out)  # worker never started
+    mirror._queue = collections.deque(maxlen=4)
+    for i in range(10):
+        mirror.log({"x": i}, step=i)
+    assert [m["x"] for m, _ in mirror._queue] == [6, 7, 8, 9]  # oldest dropped
+    assert capsys.readouterr().err.count("queue full") == 1
+
+
+def test_log_never_blocks_on_hanging_server(monkeypatch, tmp_path):
+    """The SDK wedged on a dead/slow server (run.log blocked in an HTTP send)
+    must not slow Tracker.log(): the caller only appends to the queue."""
+    monkeypatch.chdir(tmp_path)
+    _olympus_env(monkeypatch)
+    entered = threading.Event()
+    release = threading.Event()
+
+    class HangingRun(_FakeOlympusRun):
+        def log(self, metrics, step=None):
+            entered.set()
+            release.wait(30)  # models an HTTP post stuck on the network
+            super().log(metrics, step)
+
+    run = HangingRun()
+    mod = types.ModuleType("olympus")
+    mod.init = lambda **kw: run
+    mod.save = lambda path, project=None: None
+    monkeypatch.setitem(sys.modules, "olympus", mod)
+    t = tracking.init("p")
+    t.log({"x": 0}, step=0)
+    assert entered.wait(5)  # worker is now stuck inside the SDK
+    start = time.perf_counter()
+    for i in range(1, 1001):
+        t.log({"x": i}, step=i)
+    elapsed = time.perf_counter() - start
+    assert elapsed < 0.5  # 1000 calls while the SDK hangs: enqueue only
+    release.set()
+    t.finish()
+    assert len(run.logged) == 1001  # everything drained once the SDK recovered
+
+
+def test_metrics_logged_before_init_complete_are_delivered(monkeypatch, tmp_path):
+    """olympus.init runs on the worker; calls made before it finishes queue up."""
+    monkeypatch.chdir(tmp_path)
+    _olympus_env(monkeypatch)
+    release_init = threading.Event()
+    run = _FakeOlympusRun()
+    mod = types.ModuleType("olympus")
+
+    def slow_init(**kwargs):
+        release_init.wait(10)
+        return run
+
+    mod.init = slow_init
+    mod.save = lambda path, project=None: None
+    monkeypatch.setitem(sys.modules, "olympus", mod)
+    start = time.perf_counter()
+    t = tracking.init("p")  # returns immediately, init still pending
+    t.log({"x": 1}, step=1)
+    t.log({"x": 2}, step=2)
+    assert time.perf_counter() - start < 1.0
+    release_init.set()
+    t.finish()
+    assert [m["x"] for m, _ in run.logged] == [1, 2]

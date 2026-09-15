@@ -240,7 +240,7 @@ class _OlympusMirror:
         Never blocks, never talks to the SDK; the worker drains the queue."""
         if self._finished:
             return
-        if len(self._queue) >= _OLYMPUS_QUEUE_MAX and not self._overflow_noticed:
+        if len(self._queue) >= self._queue.maxlen and not self._overflow_noticed:
             self._overflow_noticed = True
             _olympus_notice(
                 "metric queue full; dropping oldest mirrored points (metrics.jsonl is unaffected)"
