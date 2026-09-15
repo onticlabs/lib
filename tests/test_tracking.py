@@ -14,8 +14,9 @@ def test_jsonl_is_the_record(monkeypatch, tmp_path):
     t.log({"loss": 1.0}, step=1)
     t.log({"loss": 0.5, "acc": 0.9}, step=2)
     t.finish()
-    lines = [json.loads(x) for x in
-             (tmp_path / "output" / "metrics.jsonl").read_text().splitlines()]
+    lines = [
+        json.loads(x) for x in (tmp_path / "output" / "metrics.jsonl").read_text().splitlines()
+    ]
     assert lines[0]["_type"] == "config"
     assert lines[0]["project"] == "saliency" and lines[0]["config"] == {"lr": 0.1}
     assert lines[1]["step"] == 1 and lines[1]["loss"] == 1.0 and "ts" in lines[1]
@@ -37,9 +38,11 @@ def test_append_on_resume_not_truncate(monkeypatch, tmp_path):
 
 def test_read_metrics_skips_truncated_tail(tmp_path):
     p = tmp_path / "metrics.jsonl"
-    p.write_text('{"_type": "config", "project": "p", "config": {}, "ts": 1}\n'
-                 '{"step": 1, "ts": 2, "loss": 0.5}\n'
-                 '{"step": 2, "ts": 3, "lo')  # hard-kill truncation
+    p.write_text(
+        '{"_type": "config", "project": "p", "config": {}, "ts": 1}\n'
+        '{"step": 1, "ts": 2, "loss": 0.5}\n'
+        '{"step": 2, "ts": 3, "lo'
+    )  # hard-kill truncation
     recs = tracking.read_metrics(p)
     assert len(recs) == 2
     assert recs[1]["loss"] == 0.5
@@ -61,7 +64,7 @@ def test_wandb_optional_and_never_fatal(monkeypatch, tmp_path):
     monkeypatch.setenv("WANDB_API_KEY", "k")
     monkeypatch.setenv("ONTIC_WANDB_RUN_ID", "abc")
     monkeypatch.chdir(tmp_path)
-    t = tracking.init("p")                    # must not raise
+    t = tracking.init("p")  # must not raise
     t.log({"x": 1})
     t.finish()
     assert (tmp_path / "output" / "metrics.jsonl").is_file()
@@ -122,11 +125,17 @@ def _fake_olympus(monkeypatch, init_raises=False):
 def _olympus_env(monkeypatch, **extra):
     monkeypatch.delenv("ONTIC_WANDB_RUN_ID", raising=False)
     monkeypatch.delenv("OLYMPUS_SERVER_URL", raising=False)
+    monkeypatch.delenv("ONTIC_LIB_NO_OLYMPUS", raising=False)
     monkeypatch.setenv("ONTIC_LIB_NO_LOG_TAIL", "1")
     monkeypatch.setenv("ONTIC_OLYMPUS_PROJECT", "team-proj")
     monkeypatch.setenv("ONTIC_OLYMPUS_RUN", "exp-run-3")
     for key, value in extra.items():
         monkeypatch.setenv(key, value)
+
+
+def _ready(t):
+    """Wait until the mirror worker finished its olympus.init attempt."""
+    assert t._olympus._ready.wait(5)
 
 
 def test_olympus_inactive_without_env(monkeypatch, tmp_path):
@@ -158,6 +167,7 @@ def test_olympus_config_assembled_from_env(monkeypatch, tmp_path):
     monkeypatch.delenv("OLYMPUS_DISABLE_REMOTE_STOP", raising=False)
     mod, _ = _fake_olympus(monkeypatch)
     t = tracking.init("p", {"lr": 0.1})
+    _ready(t)
     kwargs = mod.init_calls[0]
     assert kwargs["project"] == "team-proj" and kwargs["name"] == "exp-run-3"
     assert kwargs["resume"] == "never"
@@ -179,13 +189,22 @@ def test_olympus_config_assembled_from_env(monkeypatch, tmp_path):
 def test_olympus_omits_absent_env_keys(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     _olympus_env(monkeypatch, ONTIC_JOB_ID="j-1")
-    for env in ("ONTIC_EXPERIMENT", "ONTIC_EXPERIMENT_SHA", "ONTIC_ATTEMPT",
-                "ONTIC_DESCRIPTION", "ONTIC_TAGS", "ONTIC_DEPS",
-                "ONTIC_GIT_PARENTS", "ONTIC_GIT_SUBJECT", "ONTIC_GIT_BRANCH",
-                "ONTIC_RESUME"):
+    for env in (
+        "ONTIC_EXPERIMENT",
+        "ONTIC_EXPERIMENT_SHA",
+        "ONTIC_ATTEMPT",
+        "ONTIC_DESCRIPTION",
+        "ONTIC_TAGS",
+        "ONTIC_DEPS",
+        "ONTIC_GIT_PARENTS",
+        "ONTIC_GIT_SUBJECT",
+        "ONTIC_GIT_BRANCH",
+        "ONTIC_RESUME",
+    ):
         monkeypatch.delenv(env, raising=False)
     mod, _ = _fake_olympus(monkeypatch)
     t = tracking.init("p")
+    _ready(t)
     assert mod.init_calls[0]["config"] == {"job_id": "j-1"}
     t.finish()
 
@@ -203,6 +222,7 @@ def test_olympus_config_carries_the_run_context_env(monkeypatch, tmp_path):
     )
     mod, _ = _fake_olympus(monkeypatch)
     t = tracking.init("p")
+    _ready(t)
     cfg = mod.init_calls[0]["config"]
     assert cfg["description"] == "Sweep the learning rate; wider net"
     assert cfg["tags"] == "lr, sweep"
@@ -220,6 +240,7 @@ def test_olympus_experiment_config_wins_over_run_context_env(monkeypatch, tmp_pa
     )
     mod, _ = _fake_olympus(monkeypatch)
     t = tracking.init("p", {"description": "the experiment's own", "deps": "mine"})
+    _ready(t)
     cfg = mod.init_calls[0]["config"]
     assert cfg["description"] == "the experiment's own"
     assert cfg["deps"] == "mine"
@@ -234,6 +255,7 @@ def test_olympus_resumes_same_run(monkeypatch, tmp_path, env):
     _olympus_env(monkeypatch, **env)
     mod, _ = _fake_olympus(monkeypatch)
     t = tracking.init("p")
+    _ready(t)
     assert mod.init_calls[0]["resume"] == "allow"
     t.finish()
 
@@ -378,14 +400,17 @@ def test_error_text_truncated_to_last_64kb(monkeypatch, tmp_path):
     assert payload["text"].rstrip().endswith("THE-END")  # the tail survives
 
 
-def test_olympus_init_failure_never_fatal(monkeypatch, tmp_path):
+def test_olympus_init_failure_never_fatal(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
     _olympus_env(monkeypatch)
-    _fake_olympus(monkeypatch, init_raises=True)
+    _, run = _fake_olympus(monkeypatch, init_raises=True)
     t = tracking.init("p")  # must not raise
     t.log({"x": 1})
     t.finish()
-    assert t._olympus is None
+    # init happens on the worker; its failure leaves an inert mirror behind
+    assert t._olympus._run is None
+    assert run.logged == [] and run.finish_calls == 0
+    assert "init failed" in capsys.readouterr().err
     assert (tmp_path / "output" / "metrics.jsonl").is_file()
 
 
@@ -405,26 +430,29 @@ def _mirror(monkeypatch, tmp_path, answer):
     run = _FakeOlympusRun()
     out = tmp_path / "output"
     out.mkdir(parents=True, exist_ok=True)
-    mirror = tracking._OlympusMirror(run, out)
+    mirror = tracking._OlympusMirror(None, {}, out)
+    mirror._run = run
     mirror._server = "http://olympus.test"
     if isinstance(answer, Exception):
+
         def post(*a, **k):
             raise answer
     else:
+
         def post(*a, **k):
             return answer
+
     monkeypatch.setattr(tracking, "_post_json", post)
     return mirror, out
 
 
 def test_stop_mode_writes_marker_before_interrupt(monkeypatch, tmp_path):
-    mirror, out = _mirror(
-        monkeypatch, tmp_path, {"data": {"stop": True, "mode": "stop"}}
-    )
+    mirror, out = _mirror(monkeypatch, tmp_path, {"data": {"stop": True, "mode": "stop"}})
     marker = out / ".ontic" / "terminate-requested"
     seen = []
     monkeypatch.setattr(
-        tracking._thread, "interrupt_main",
+        tracking._thread,
+        "interrupt_main",
         lambda: seen.append(("interrupt", marker.is_file())),
     )
     assert mirror._poll_once() is True
@@ -433,9 +461,7 @@ def test_stop_mode_writes_marker_before_interrupt(monkeypatch, tmp_path):
 
 
 def test_interrupt_mode_skips_marker(monkeypatch, tmp_path):
-    mirror, out = _mirror(
-        monkeypatch, tmp_path, {"data": {"stop": True, "mode": "interrupt"}}
-    )
+    mirror, out = _mirror(monkeypatch, tmp_path, {"data": {"stop": True, "mode": "interrupt"}})
     seen = []
     monkeypatch.setattr(tracking._thread, "interrupt_main", lambda: seen.append("i"))
     assert mirror._poll_once() is True
@@ -467,6 +493,7 @@ def test_log_tail_feeds_system_logs(monkeypatch, tmp_path):
     monkeypatch.delenv("ONTIC_LIB_NO_LOG_TAIL", raising=False)
     _, run = _fake_olympus(monkeypatch)
     t = tracking.init("p")
+    _ready(t)
     print("hello tail")
     t._olympus._flush_tail()
     assert any(entry.get("console") == "hello tail" for entry in run.system)
