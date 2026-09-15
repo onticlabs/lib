@@ -9,6 +9,7 @@ SDK's module state stay clean:
     uv run --extra olympus python tests/bench_tracking.py slow
     uv run --extra olympus python tests/bench_tracking.py tee_off
     uv run --extra olympus python tests/bench_tracking.py tee_on
+    uv run --extra olympus python tests/bench_tracking.py tee_slow
 
 Scenarios time Tracker.log() (or print()) per call on the caller thread:
 
@@ -18,6 +19,7 @@ Scenarios time Tracker.log() (or print()) per call on the caller thread:
 - slow:    mirror on, the fake server answers /api/bulk_log after a 5 s stall,
            modelling a slow or wedged production server.
 - tee_off / tee_on: 10k print() calls with the stdout tee inactive vs active.
+- tee_slow: paced print() calls while the slow server wedges the SDK sender.
 
 Media never reaches the mirror: Tracker.log() serializes every record with
 json.dumps for metrics.jsonl first, which raises TypeError on olympus media
@@ -118,7 +120,7 @@ def _setup_env(tmp: str, mirror: bool, server_url: str | None, tail: bool) -> No
         os.environ["ONTIC_LIB_LOG_TAIL"] = "1"
 
 
-def _bench_log_calls(n: int, label: str, pace_s: float = 0.0) -> None:
+def _bench_log_calls(n: int, label: str, pace_s: float = 0.0):
     """Time each log() call. pace_s > 0 spreads the calls out so they overlap
     several background send cycles, the shape of a real training loop."""
     from ontic_lib import tracking
