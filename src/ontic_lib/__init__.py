@@ -1,11 +1,16 @@
 """ontic_lib: shared, promoted code for Ontic experiments.
 
-Layout follows the function-type split used by PyTorch3D/Kaolin: ``transforms``
-(SO(3)/SE(3)/Sim(3) math), ``camera`` (pinhole intrinsics/projection/rays),
-``ops`` (batched tensor ops: sampling, serialization, alignment, point clouds),
-``depth`` (lifting and metric alignment), ``splats`` (3D Gaussian helpers),
-``metrics`` (evaluation protocols), plus training infrastructure at the top
-level (``tracking``, ``checkpoint``, ``distributed``).
+Layout follows the function-type split used by PyTorch3D/Kaolin:
+
+* ``transforms`` — SO(3)/SE(3)/Sim(3) math and representation conversions.
+* ``camera`` — pinhole intrinsics, projection, rays.
+* ``pointops`` — batched point ops: sampling, serialization, packing, grids, alignment.
+* ``depth`` — depth lifting and metric alignment.
+* ``structures`` — data containers: ``PointCloud``, ``PointBatch``, ``Gaussians``.
+* ``io`` — save/load of structures (``.npz`` core; ``.safetensors``/``.ply`` extras).
+* ``splats`` — 3D Gaussian splatting: covariances, SH rotation, rasterization.
+* ``metrics`` — evaluation protocols and aggregation.
+* ``tracking``, ``checkpoint``, ``distributed`` — training infrastructure (top level).
 
 Conventions (binding for all geometric APIs)
 --------------------------------------------
