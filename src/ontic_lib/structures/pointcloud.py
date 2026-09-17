@@ -77,6 +77,12 @@ def aabb_mask(points: Tensor, minimum: Tensor, maximum: Tensor) -> Tensor:
     )
 
 
+def padded_aabb(points: Tensor, margin: float = 0.0) -> tuple[Tensor, Tensor]:
+    """``(minimum, maximum)`` of the AABB spanning ``(..., 3)`` points, padded by ``margin``."""
+    flat = points.reshape(-1, 3)
+    return flat.amin(0) - margin, flat.amax(0) + margin
+
+
 def crop_to_aabb(
     points: Tensor, features: Tensor | None, minimum, maximum
 ) -> tuple[Tensor, Tensor | None]:

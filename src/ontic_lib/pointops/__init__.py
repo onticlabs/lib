@@ -1,22 +1,31 @@
-"""Batched tensor ops: point sampling, serialization, alignment, point clouds.
+"""Batched point ops: sampling, serialization, packing, voxel grids, alignment.
 
 See the package-level conventions in :mod:`ontic_lib`.
 """
 
 from .alignment import (
+    ALIGNMENT_MODES,
+    AlignmentMode,
+    align,
     align_camera_poses_se3,
     align_camera_poses_sim3,
     align_cameras_sim3,
     align_points_sim3,
     anchor_transform,
+    apply_metric_scale,
     clamp_scale,
+    compute_alignment,
+    conf_drop_mask,
+    percentile_conf_threshold,
 )
-from .pointcloud import (
-    PointCloud,
-    aabb_mask,
-    crop_to_aabb,
-    nearest_point_to_ray,
-    pointcloud_from_depth_views,
+from .grid import Clusters, cluster_reduce, code_clusters, grid_clusters, voxel_coords
+from .packing import (
+    batch_to_offset,
+    offset_to_batch,
+    offset_to_counts,
+    pack_padded,
+    scatter_to_padded,
+    unpack_to_padded,
 )
 from .sampling import (
     furthest_point_indices,
@@ -26,35 +35,56 @@ from .sampling import (
     voxel_pool,
 )
 from .serialization import (
+    Serialization,
     SpaceFillingOrder,
     encode_grid,
     hilbert_decode,
     hilbert_encode,
     morton_decode,
     morton_encode,
+    pool_serialization,
+    reserialize,
+    serialize,
 )
 
 __all__ = [
-    "PointCloud",
+    "ALIGNMENT_MODES",
+    "AlignmentMode",
+    "Clusters",
+    "Serialization",
     "SpaceFillingOrder",
-    "aabb_mask",
+    "align",
     "align_camera_poses_se3",
     "align_camera_poses_sim3",
     "align_cameras_sim3",
     "align_points_sim3",
     "anchor_transform",
+    "apply_metric_scale",
+    "batch_to_offset",
     "clamp_scale",
-    "crop_to_aabb",
+    "cluster_reduce",
+    "code_clusters",
+    "compute_alignment",
+    "conf_drop_mask",
     "encode_grid",
     "furthest_point_indices",
     "furthest_point_sample",
+    "grid_clusters",
     "hilbert_decode",
     "hilbert_encode",
     "morton_decode",
     "morton_encode",
-    "nearest_point_to_ray",
-    "pointcloud_from_depth_views",
+    "offset_to_batch",
+    "offset_to_counts",
+    "pack_padded",
+    "percentile_conf_threshold",
+    "pool_serialization",
+    "reserialize",
+    "scatter_to_padded",
+    "serialize",
     "space_filling_stride",
     "space_filling_stride_indices",
+    "unpack_to_padded",
+    "voxel_coords",
     "voxel_pool",
 ]

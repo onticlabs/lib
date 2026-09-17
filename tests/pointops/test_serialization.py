@@ -106,3 +106,92 @@ def test_ordering_locality_sanity(encode):
     random_step = (shuffled[1:] - shuffled[:-1]).norm(dim=-1).mean()
 
     assert curve_step < random_step
+
+
+# --- Serialization container ---------------------------------------------------------
+
+
+def _grid_and_batch(n=200, seed=5):
+    g = torch.Generator().manual_seed(seed)
+    grid = torch.randint(0, 40, (n, 3), generator=g, dtype=torch.int32)
+    batch = torch.sort(torch.randint(0, 3, (n,), generator=g)).values
+    return grid, batch
+
+
+def test_serialize_depth_rule_and_layout():
+    from ontic_lib.pointops.serialization import serialize
+
+    grid, batch = _grid_and_batch()
+    s = serialize(grid, batch, orders=["z", "hilbert-trans"])
+    assert s.depth == int(grid.max()).bit_length() + 1
+    assert s.code.shape == (2, grid.shape[0])
+    for k, order in enumerate(["z", "hilbert-trans"]):
+        assert torch.equal(s.code[k], encode_grid(grid, batch=batch, depth=s.depth, order=order))
+        assert torch.equal(s.code[k][s.order[k]], s.code[k].sort().values)
+        assert torch.equal(s.order[k][s.inverse[k]], torch.arange(grid.shape[0]))
+    with pytest.raises(ValueError):
+        serialize(grid, batch, orders=["z"], depth=17)
+    with pytest.raises(ValueError):
+        serialize(grid, torch.full_like(batch, 2**15), orders=["z"], depth=16)  # 48 + 16 > 63
+    with pytest.raises(ValueError):
+        serialize(grid, batch, orders=[])
+
+
+def test_serialize_shuffle_is_reproducible():
+    from ontic_lib.pointops.serialization import serialize
+
+    grid, batch = _grid_and_batch()
+    orders = ["z", "z-trans", "hilbert", "hilbert-trans"]
+    plain = serialize(grid, batch, orders=orders)
+    a = serialize(
+        grid, batch, orders=orders, shuffle=True, generator=torch.Generator().manual_seed(3)
+    )
+    b = serialize(
+        grid, batch, orders=orders, shuffle=True, generator=torch.Generator().manual_seed(3)
+    )
+    assert torch.equal(a.code, b.code) and torch.equal(a.order, b.order)
+    # Shuffling permutes rows of the unshuffled result.
+    perm = torch.randperm(4, generator=torch.Generator().manual_seed(3))
+    assert torch.equal(a.code, plain.code[perm])
+    assert torch.equal(a.inverse, plain.inverse[perm])
+
+
+def test_reserialize_keeps_spatial_bits():
+    from ontic_lib.pointops.serialization import reserialize, serialize
+
+    grid, batch = _grid_and_batch()
+    s = serialize(grid, batch, orders=["z", "hilbert"])
+    new_batch = batch // 2
+    r = reserialize(s, new_batch)
+    shift = s.depth * 3 + 10
+    assert r.depth == s.depth
+    assert torch.equal(r.code & ((1 << shift) - 1), s.code & ((1 << shift) - 1))
+    assert torch.equal(r.code >> shift, new_batch.expand(2, -1))
+    direct = serialize(grid, new_batch, orders=["z", "hilbert"], depth=s.depth)
+    assert torch.equal(r.code, direct.code)
+    assert torch.equal(r.order, direct.order)
+
+
+def test_pool_serialization_matches_frontier_arithmetic():
+    from ontic_lib.pointops.serialization import pool_serialization, serialize
+
+    grid, batch = _grid_and_batch()
+    s = serialize(grid, batch, orders=["z", "hilbert"])
+    pooling_depth = 1
+    # Reference: frontier SerializedPooling.serialized_forward, first six lines.
+    code = s.code >> pooling_depth * 3
+    _, cluster, counts = torch.unique(code[0], sorted=True, return_inverse=True, return_counts=True)
+    _, indices = torch.sort(cluster, stable=True)
+    idx_ptr = torch.cat([counts.new_zeros(1), torch.cumsum(counts, dim=0)])
+    head = indices[idx_ptr[:-1]]
+    ref_code = code[:, head]
+    ref_order = torch.argsort(ref_code, stable=True)
+    ref_inverse = torch.zeros_like(ref_order).scatter_(
+        1, ref_order, torch.arange(ref_code.shape[1]).repeat(2, 1)
+    )
+
+    p = pool_serialization(s, head, pooling_depth)
+    assert p.depth == s.depth - pooling_depth
+    assert torch.equal(p.code, ref_code)
+    assert torch.equal(p.order, ref_order)
+    assert torch.equal(p.inverse, ref_inverse)

@@ -5,6 +5,8 @@
 # Written by Peng-Shuai Wang
 # --------------------------------------------------------
 
+"""Z-order (Morton) key encode/decode via lookup tables (vendored from O-CNN, torch)."""
+
 from typing import Optional, Union
 
 import torch

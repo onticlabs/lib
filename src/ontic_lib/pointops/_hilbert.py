@@ -1,5 +1,5 @@
-"""
-Hilbert Order
+"""Hilbert-curve encode/decode on integer grids (torch port of numpy-hilbert-curve).
+
 Modified from https://github.com/PrincetonLIPS/numpy-hilbert-curve
 
 Author: Xiaoyang Wu (xiaoyang.wu.cs@gmail.com), Kaixin Xu
