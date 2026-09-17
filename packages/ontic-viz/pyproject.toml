@@ -15,6 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+rerun = ["rerun-sdk>=0.38,<0.39"]  # optional headless tracking recordings
 robot = ["mujoco>=3.1"]  # robot model overlay in the backbone viewer
 
 [project.scripts]

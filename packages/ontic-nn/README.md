@@ -7,6 +7,10 @@ pretrained-weight loading (`ontic_nn.dinov2`), DPT decoder heads
 transformer layers (`ontic_nn.layers`). Every module imports with `torch` +
 `einops`; accelerators are lazy, explicit opt-ins.
 
+Optional geometry backbones (`ontic_nn.wrappers`) and 3D point trackers
+(`ontic_nn.trackers`) share camera conventions. The trackers preserve point
+identities across RGB-D clips; see the [tracking API and setup](../../docs/point_tracking.md).
+
 ## Install
 
 As a git dependency of an experiment (the package lives in a subdirectory of

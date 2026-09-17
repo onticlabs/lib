@@ -273,3 +273,25 @@ class TestComputeMetricScale:
         r._load_metric("da3")
         r._load_metric("unidepth")
         assert built == ["da3", "unidepth"]
+
+
+def test_checkpoint_change_rebuilds_model_and_changes_geometry_cache_key():
+    builds = []
+
+    def builder(name, **options):
+        builds.append((name, options))
+        return DummyBackbone()
+
+    runner = BackboneRunner(device="cpu", builder=builder)
+    runner.configure("da3", checkpoint_path="/models/first.pth")
+    key = runner.model_key("da3")
+    runner.load("da3")
+    first = runner._backbone
+    runner.configure("da3", checkpoint_path="/models/first.pth")
+    runner.load("da3")
+    assert runner._backbone is first and len(builds) == 1
+    runner.configure("da3", checkpoint_path="/models/second.pth")
+    assert runner.model_key("da3") != key
+    runner.load("da3")
+    assert runner._backbone is not first and len(builds) == 2
+    assert builds[-1][1] == {"checkpoint_path": "/models/second.pth", "allow_download": False}

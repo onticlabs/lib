@@ -10,6 +10,7 @@ from ontic_viz.backbone_viewer.render import (
     COLOR_MODES,
     build_point_cloud,
     conf_to_rgb,
+    confidence_threshold,
     frustum_params,
     mat_to_wxyz,
     pred_cameras_in_display_frame,
@@ -55,6 +56,13 @@ def test_color_images():
     assert img.shape == (2, 3, 4, 4)
     assert not torch.allclose(img[0, :, 0, 0], img[1, :, 0, 0])
     assert torch.allclose(img[0], img[0, :, 0, 0].view(3, 1, 1).expand_as(img[0]))
+
+
+def test_quantized_confidence_keeps_top_ties_and_excludes_missing_scores():
+    conf = torch.tensor([1.0, 2.0, 2.0, 2.0, float("nan")])
+    keep = conf > confidence_threshold(conf, 50)
+    assert keep.tolist() == [False, True, True, True, False]
+    assert confidence_threshold(torch.ones(4), 50) == float("-inf")
 
 
 @pytest.mark.parametrize("mode", COLOR_MODES)

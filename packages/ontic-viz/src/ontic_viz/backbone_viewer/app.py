@@ -1,6 +1,6 @@
 """Viser GUI wiring (:class:`BackboneViewer`) over the headless core.
 
-Layout: backbone / dataset / trajectory pickers and a timestep slider; per-camera
+Layout: dataset -> depth model -> tracking; per-camera
 "use as input" checkboxes (camera images live on the 3D frustums at the GT poses);
 GT-camera conditioning + Run; cheap re-render controls (stride, confidence
 percentile, voxel / SFC / FPS thinning, colour mode, metric alignment, point size);
@@ -10,6 +10,7 @@ robot overlay and action points (synthrobot).
 
 from __future__ import annotations
 
+import threading
 import zlib
 
 import numpy as np
@@ -17,14 +18,17 @@ import torch
 import torch.nn.functional as F
 
 from ontic_lib.camera import overlay_masks_on_images, points_with_radius, project_occupancy
-from ontic_lib.pointops import align_camera_poses_sim3, clamp_scale, percentile_conf_threshold
+from ontic_lib.pointops import align_camera_poses_sim3, clamp_scale
 from ontic_lib.structures import aabb_mask, nearest_point_to_ray, padded_aabb
 
 from .config import PRESETS_PATH, ViewConfig, dataset_defaults, ensure_default_presets, save_preset
 from .data_source import DEFAULT_ROOTS, build_source, dataset_has_gt_depth, dataset_names
+from .errors import log_error, status_error
 from .render import (
     COLOR_MODES,
+    PointFilters,
     build_point_cloud,
+    confidence_threshold,
     frustum_params,
     mat_to_wxyz,
     pred_cameras_in_display_frame,
@@ -148,12 +152,13 @@ class BackboneViewer:
         self.stage = stage
         self.presets_path = presets_path or PRESETS_PATH
         self.backbones = backbones if backbones is not None else backbone_names()
-        self.datasets = datasets if datasets is not None else dataset_names()
+        self.datasets = datasets if datasets is not None else ["demo", *dataset_names()]
         self.metric_models = (
             metric_models if metric_models is not None else metric_model_names()
         ) or ["da3"]
 
         self.runner = BackboneRunner(device=device)
+        self._backbone_paths = {}
         self._sources: dict = {}
         self._source = None
         self._traj_labels: list[str] = []
@@ -181,106 +186,151 @@ class BackboneViewer:
         self._pred_cam_scene: list = []
 
         self._busy = False
+        self._operation_lock = threading.Lock()
+        self._tracking_frame = False
+        self._camera_selection = {}
+        self._selection_context = None
         self._suspend = False
 
         self._build_gui()
-        self.server.gui.configure_theme(dark_mode=True)
+        self.server.gui.configure_theme(
+            dark_mode=True, control_width="large", brand_color=(66, 170, 190)
+        )
         self.server.scene.set_background_image(np.full((1, 1, 3), (24, 27, 33), dtype=np.uint8))
         self.server.scene.add_frame("/world", show_axes=True, axes_length=0.2, axes_radius=0.005)
+        self.server.on_client_connect(self._frame_client)
 
     # ------------------------------------------------------------------ GUI
     def _build_gui(self) -> None:
         g = self.server.gui
-        with g.add_folder("Model & data", order=0):
-            self.btn_run = g.add_button("Run inference")
-            self.dd_backbone = g.add_dropdown(
-                "Backbone", self.backbones, initial_value=self.backbones[0]
-            )
-            self.dd_dataset = g.add_dropdown(
-                "Dataset", self.datasets, initial_value=self.datasets[0]
-            )
-            self.btn_loadds = g.add_button("Load dataset")
-            self.dd_traj = g.add_dropdown(
-                "Trajectory", ["(load a dataset)"], initial_value="(load a dataset)"
-            )
-            self.sl_time = g.add_slider("Timestep", 0, 1, 1, 0)
+        from .tracking_panel import TrackingPanel
 
-        self._configs = self._all_configs()
-        with g.add_folder("Presets", order=0.5):
-            initial = f"{self.datasets[0]}_default"
-            self.dd_preset = g.add_dropdown(
-                "Config",
-                list(self._configs),
-                initial_value=initial if initial in self._configs else next(iter(self._configs)),
-            )
-            self.btn_apply_preset = g.add_button("Apply preset")
-            self.tb_preset = g.add_text("Save as", "")
-            self.btn_save_preset = g.add_button("Save preset")
-
-        self.cam_folder = g.add_folder("Input cameras", order=10)
-        with self.cam_folder:
-            self.btn_all = g.add_button("Select all")
-            self.btn_none = g.add_button("Select none")
-        self.btn_all.on_click(lambda _: self._set_all(True))
-        self.btn_none.on_click(lambda _: self._set_all(False))
-
-        with g.add_folder("Backbone options", order=3.5):
-            self.cb_condition = g.add_checkbox("Condition model on GT cameras", False)
-            self.sl_lside = g.add_slider("Input long side (0=default)", 0, 1036, 2, 0)
-            self.dd_align = g.add_dropdown(
-                "Metric alignment", ALIGN_MODES, initial_value=AlignMode.SIM3_POINTS.value
-            )
-            self.dd_metric = g.add_dropdown(
-                "Metric model (method A)", self.metric_models, initial_value=self.metric_models[0]
-            )
-            self.cb_pred_cams = g.add_checkbox("Show predicted cameras (orange)", False)
-            self.dd_color = g.add_dropdown("Color mode", COLOR_MODES, initial_value=COLOR_MODES[0])
-            self.sl_psize = g.add_slider("Point size", 0.001, 0.05, 0.001, 0.006)
-
-        with g.add_folder("Point cloud", order=3):
-            self.sl_stride = g.add_slider("Stride", 1, 16, 1, 2)
-            self.sl_conf = g.add_slider("Drop lowest-conf %", 0, 95, 1, 0)
-            self.sl_voxel = g.add_slider("Voxel size (m, 0=off)", 0.0, 0.1, 0.002, 0.0)
-            self.sl_sfc = g.add_slider("SFC stride (1=off)", 1, 64, 1, 1)
-            self.sl_fps = g.add_slider("FPS max points", 0, 50000, 1000, 0)
-            self.btn_fps = g.add_button("Apply FPS")
-
-        with g.add_folder("Occupancy (reproject cloud)", order=4):
-            self.btn_occ = g.add_button("Project -> occupancy")
-            self.sl_splat = g.add_slider("Splat scale", 0.1, 10.0, 0.1, 1.0)
-            self.sl_maxr = g.add_slider("Max radius (px)", 1, 30, 1, 6)
-
-        with g.add_folder("Hands & workspace", order=2.5):
-            self.cb_crop = g.add_checkbox("Crop to workspace", False)
-            self.cb_hands = g.add_checkbox("Show hand skeleton", False)
-            self.cb_robot = g.add_checkbox("Show robot (synthrobot)", False)
-            self.cb_action_pts = g.add_checkbox("Show action points (synthrobot)", False)
-            self.dd_action_kind = g.add_dropdown(
-                "Action point kind", ("skeleton", "surface"), initial_value="surface"
-            )
-            self.sl_action_n = g.add_slider("Action points per link", 1, 512, 1, 128)
-            self.cb_action_normals = g.add_checkbox("Show surface normals", False)
-            self.vec_wmin = g.add_vector3(
-                "Workspace min", (-0.5, -0.5, -0.5), min=(-5, -5, -5), max=(5, 5, 5), step=0.01
-            )
-            self.vec_wmax = g.add_vector3(
-                "Workspace max", (0.5, 0.5, 0.5), min=(-5, -5, -5), max=(5, 5, 5), step=0.01
-            )
-            self.btn_winit = g.add_button("Init box from hands/cameras")
-            self.btn_frame = g.add_button("Frame scene")
-
-        with g.add_folder("Measure", order=4.5):
-            self.cb_ruler = g.add_checkbox("Ruler (click 2 cloud points; drag to adjust)", False)
-
+        g.add_markdown("## Geometry & motion", order=-3)
         self.status = g.add_markdown(
-            "Ready. Pick a backbone + dataset, then **Load dataset**.", order=-1
+            "Load the demo to explore, or select a dataset to begin.", order=-2
         )
+        self.playback_folder = g.add_folder("Playback", order=1)
+        with self.playback_folder:
+            self.sl_time = g.add_slider("Dataset frame", 0, 1, 1, 0)
+        tabs = g.add_tab_group(order=0)
+        self.dataset_tab = tabs.add_tab("1. Dataset")
+        self.depth_tab = tabs.add_tab("2. Depth model")
+        self.track_tab = tabs.add_tab("3. Tracking")
+        self.display_tab = tabs.add_tab("4. Display")
+        with self.dataset_tab:
+            g.add_markdown(
+                "Select a dataset, trajectory, cameras and clip. Then open **2. Depth model**.",
+                order=-1,
+            )
+            with g.add_folder("Dataset", order=0):
+                self.dd_dataset = g.add_dropdown(
+                    "Dataset", self.datasets, initial_value=self.datasets[0]
+                )
+                self.btn_loadds = g.add_button("Load dataset", color="blue")
+                self.dd_traj = g.add_dropdown(
+                    "Trajectory", ["(load a dataset)"], initial_value="(load a dataset)"
+                )
+            self.cam_folder = g.add_folder("Input cameras", order=2)
+            with self.cam_folder:
+                self.btn_all = g.add_button("Select all")
+                self.btn_none = g.add_button("Select none")
+            self.btn_all.on_click(lambda _: self._set_all(True))
+            self.btn_none.on_click(lambda _: self._set_all(False))
+
+        with self.depth_tab:
+            g.add_markdown(
+                "Choose the depth model and prepare geometry for the dataset selected in step 1.",
+                order=-1,
+            )
+            with g.add_folder("Depth model", order=0):
+                self.dd_backbone = g.add_dropdown(
+                    "Backbone", self.backbones, initial_value=self.backbones[0]
+                )
+                self.depth_model_hint = g.add_markdown("")
+                self.cb_condition = g.add_checkbox("Condition model on GT cameras", False)
+                self.bb_checkpoint = g.add_text("Backbone checkpoint", "")
+                self.bb_download = g.add_checkbox("Download missing backbone weights", False)
+            with g.add_folder("Current-frame depth", order=1):
+                self.sl_lside = g.add_slider("Input long side (0=default)", 0, 1036, 2, 0)
+                self.btn_run = g.add_button("Run depth on current frame")
+                g.add_markdown("Preview the selected backbone on the current dataset frame.")
+            with g.add_folder("Current-frame alignment", order=3, expand_by_default=False):
+                self.dd_align = g.add_dropdown(
+                    "Metric alignment", ALIGN_MODES, initial_value=AlignMode.SIM3_POINTS.value
+                )
+                self.dd_metric = g.add_dropdown(
+                    "Metric model (method A)",
+                    self.metric_models,
+                    initial_value=self.metric_models[0],
+                )
+                self.cb_pred_cams = g.add_checkbox("Show predicted cameras (orange)", False)
+
+        self.tracking = TrackingPanel(self, self.track_tab, self.playback_folder)
+        with self.display_tab:
+            self.tracking.build_display()
+            self._configs = self._all_configs()
+            with g.add_folder("Presets", order=6, expand_by_default=False):
+                initial = f"{self.datasets[0]}_default"
+                self.dd_preset = g.add_dropdown(
+                    "Config",
+                    list(self._configs),
+                    initial_value=initial
+                    if initial in self._configs
+                    else next(iter(self._configs)),
+                )
+                self.btn_apply_preset = g.add_button("Apply preset")
+                self.tb_preset = g.add_text("Save as", "")
+                self.btn_save_preset = g.add_button("Save preset")
+
+            with g.add_folder("Depth appearance", order=0):
+                self.dd_color = g.add_dropdown(
+                    "Color mode", COLOR_MODES, initial_value=COLOR_MODES[0]
+                )
+                self.sl_psize = g.add_slider("Point size", 0.001, 0.05, 0.001, 0.006)
+
+            with g.add_folder("Point cloud", order=3):
+                self.sl_stride = g.add_slider("Stride", 1, 16, 1, 2)
+                self.sl_conf = g.add_slider("Drop lowest-conf %", 0, 95, 1, 0)
+                self.sl_voxel = g.add_slider("Voxel size (m, 0=off)", 0.0, 0.1, 0.002, 0.0)
+                self.sl_sfc = g.add_slider("SFC stride (1=off)", 1, 64, 1, 1)
+                self.sl_fps = g.add_slider("FPS max points", 0, 50000, 1000, 0)
+                self.btn_fps = g.add_button("Apply FPS")
+
+            with g.add_folder("Occupancy (reproject cloud)", order=4, expand_by_default=False):
+                self.btn_occ = g.add_button("Project -> occupancy")
+                self.sl_splat = g.add_slider("Splat scale", 0.1, 10.0, 0.1, 1.0)
+                self.sl_maxr = g.add_slider("Max radius (px)", 1, 30, 1, 6)
+
+            with g.add_folder("Hands & workspace", order=2.5, expand_by_default=False):
+                self.cb_crop = g.add_checkbox("Crop to workspace", False)
+                self.cb_hands = g.add_checkbox("Show hand skeleton", False)
+                self.cb_robot = g.add_checkbox("Show robot (synthrobot)", False)
+                self.cb_action_pts = g.add_checkbox("Show action points (synthrobot)", False)
+                self.dd_action_kind = g.add_dropdown(
+                    "Action point kind", ("skeleton", "surface"), initial_value="surface"
+                )
+                self.sl_action_n = g.add_slider("Action points per link", 1, 512, 1, 128)
+                self.cb_action_normals = g.add_checkbox("Show surface normals", False)
+                self.vec_wmin = g.add_vector3(
+                    "Workspace min", (-0.5, -0.5, -0.5), min=(-5, -5, -5), max=(5, 5, 5), step=0.01
+                )
+                self.vec_wmax = g.add_vector3(
+                    "Workspace max", (0.5, 0.5, 0.5), min=(-5, -5, -5), max=(5, 5, 5), step=0.01
+                )
+                self.btn_winit = g.add_button("Init box from hands/cameras")
+                self.btn_frame = g.add_button("Frame scene")
+
+            with g.add_folder("Measure", order=4.5, expand_by_default=False):
+                self.cb_ruler = g.add_checkbox(
+                    "Ruler (click 2 cloud points; drag to adjust)", False
+                )
 
         self.btn_loadds.on_click(lambda _: self._guarded(self._load_dataset))
         self.dd_traj.on_update(lambda _: self._on_traj_or_time())
         self.sl_time.on_update(lambda _: self._on_traj_or_time())
         self.btn_run.on_click(lambda _: self._guarded(self._run))
         self.dd_backbone.on_update(lambda _: self._on_backbone_change())
+        self.bb_checkpoint.on_update(lambda _: self._remember_backbone_checkpoint())
         self.dd_metric.on_update(lambda _: self._on_metric_model_change())
         self.cb_pred_cams.on_update(lambda _: self._guarded(self._render_pred_cameras))
         # sl_fps is deliberately not live (FPS is slow); it runs via the Apply FPS button.
@@ -295,9 +345,7 @@ class BackboneViewer:
             h.on_update(lambda _: self._cheap_update())
         self.sl_conf.on_update(lambda _: self._on_conf_change())
         self.sl_lside.on_update(lambda _: self._on_long_side())
-        self.btn_fps.on_click(
-            lambda _: self._guarded(lambda: self._render_cloud(int(self.sl_fps.value)))
-        )
+        self.btn_fps.on_click(lambda _: self._guarded(self._apply_fps))
         self.btn_occ.on_click(lambda _: self._toggle_occupancy())
         for h in (self.sl_splat, self.sl_maxr):
             h.on_update(lambda _: self._on_occ_param())
@@ -321,20 +369,23 @@ class BackboneViewer:
         self.btn_save_preset.on_click(lambda _: self._save_preset())
 
         self.cb_condition.disabled = not backbone_accepts_gt_cameras(self.dd_backbone.value)
+        self._update_depth_model_hint()
 
     def _set_status(self, msg: str) -> None:
         self.status.content = msg
 
     def _guarded(self, fn) -> None:
-        if self._busy:
+        if not self._operation_lock.acquire(blocking=False):
             return
         self._busy = True
         try:
             fn()
         except Exception as e:  # surface errors in the UI rather than dying
-            self._set_status(f"{_RED}{type(e).__name__}: {e}</span>")
+            summary = log_error(getattr(fn, "__name__", repr(fn)), e)
+            self._set_status(status_error(summary))
         finally:
             self._busy = False
+            self._operation_lock.release()
 
     # -------------------------------------------------------------- dataset
     def _load_dataset(self) -> None:
@@ -344,13 +395,20 @@ class BackboneViewer:
         if src is None:
             src = build_source(name, root=self.roots.get(name), stage=self.stage)
             self._sources[name] = src
+        if not src.list_trajectories():
+            raise ValueError(f"{name} contains no trajectories for this split")
+        self.tracking.clear(clear_cache=True)
         self._source = src
+        self._camera_selection.clear()
+        self._selection_context = None
+        self._framed_traj = None
 
         raw = src.list_trajectories()
         self._traj_labels = [f"{i:04d} - {t}" for i, t in enumerate(raw)]
         self._suspend = True
         self.dd_traj.options = self._traj_labels
         self.dd_traj.value = self._traj_labels[0]
+        self.sl_time.value = 0
         self._suspend = False
 
         default_key = f"{name}_default"
@@ -397,6 +455,7 @@ class BackboneViewer:
         self.sl_voxel.value = float(cfg.voxel_size)
         self.sl_sfc.value = int(cfg.sfc_stride)
         self.sl_fps.value = int(cfg.fps_max_points)
+        self._cloud_max_points = int(cfg.fps_max_points)
         self.sl_psize.value = float(cfg.point_size)
         self.dd_color.value = cfg.color_mode
         self.dd_align.value = (
@@ -436,12 +495,22 @@ class BackboneViewer:
 
     def _load_frame(self) -> None:
         ti = self._traj_index()
+        context = (id(self._source), ti)
+        if context != self._selection_context:
+            self._camera_selection.clear()
+            self._selection_context = context
+        self.tracking.set_context(self._source, ti)
         nt = self._source.num_timesteps(ti)
         self._suspend = True
         self.sl_time.max = max(1, nt - 1)
         self._suspend = False
         t = min(int(self.sl_time.value), nt - 1)
 
+        if self.tracking.show_frame(t):
+            return
+        self._tracking_frame = False
+        self.tracking.hide()
+        self.tracking.render()
         want_depth = backbone_needs_gt_depth(self.dd_backbone.value)
         frame = self._source.get_frame(ti, t, with_depth=want_depth)
         self._frame = frame
@@ -459,7 +528,7 @@ class BackboneViewer:
             return
         self._set_status(
             f"{self.dd_traj.value} - t={t} - {frame.images.shape[0]} cameras. "
-            "Tick input cameras, then **Run inference**."
+            "Tick input cameras, then **Run depth on current frame**."
         )
 
     # -------------------------------------------------------------- cameras
@@ -471,7 +540,9 @@ class BackboneViewer:
 
         with self.cam_folder:
             for i, name in enumerate(frame.cam_names):
-                cb = self.server.gui.add_checkbox(f"use cam {i} ({name})", True)
+                cb = self.server.gui.add_checkbox(
+                    f"Camera {i} · {name}", self._camera_selection.get(name, True)
+                )
                 cb.on_update(lambda _: self._recolor_cameras())
                 self._cam_checks.append(cb)
 
@@ -492,16 +563,25 @@ class BackboneViewer:
         self._recolor_cameras()
 
     def _set_all(self, value: bool) -> None:
+        if self._busy:
+            return
         for cb in self._cam_checks:
             cb.value = value
         self._recolor_cameras()
 
     def _toggle_cam(self, idx: int) -> None:
+        if self._busy:
+            return
         if 0 <= idx < len(self._cam_checks):
             self._cam_checks[idx].value = not self._cam_checks[idx].value
             self._recolor_cameras()
 
     def _recolor_cameras(self) -> None:
+        if self._frame is not None:
+            self._camera_selection.update(
+                {name: bool(cb.value) for name, cb in zip(self._frame.cam_names, self._cam_checks)}
+            )
+        self.tracking.sync_cameras()
         for cb, fr in zip(self._cam_checks, self._cam_scene):
             on = bool(cb.value)
             fr.color = _INPUT_COLOR if on else _OFF_COLOR
@@ -544,7 +624,20 @@ class BackboneViewer:
     def _selected_ix(self) -> list[int]:
         return [i for i, cb in enumerate(self._cam_checks) if cb.value]
 
+    def _remember_backbone_checkpoint(self) -> None:
+        self._backbone_paths[self.dd_backbone.value] = self.bb_checkpoint.value.strip()
+
+    def _configure_backbone(self) -> None:
+        self.runner.configure(
+            self.dd_backbone.value,
+            checkpoint_path=self.bb_checkpoint.value.strip(),
+            allow_download=self.bb_download.value,
+        )
+
     def _on_backbone_change(self) -> None:
+        self._update_depth_model_hint()
+        self.tracking.update_depth_summary()
+        self.bb_checkpoint.value = self._backbone_paths.get(self.dd_backbone.value, "")
         accepts = backbone_accepts_gt_cameras(self.dd_backbone.value)
         self.cb_condition.disabled = not accepts
         if not accepts and self.cb_condition.value:
@@ -556,7 +649,7 @@ class BackboneViewer:
         note = (
             "conditions on GT cameras when enabled."
             if accepts
-            else "is pose-free - GT-cam conditioning N/A."
+            else "does not accept GT-camera conditioning."
         )
         if backbone_is_monocular(self.dd_backbone.value):
             note += (
@@ -564,6 +657,16 @@ class BackboneViewer:
                 " fall back to `none`, which lifts with the GT cameras."
             )
         self._set_status(f"**{self.dd_backbone.value}** " + note)
+
+    def _update_depth_model_hint(self) -> None:
+        name = self.dd_backbone.value
+        if name == "gtdepth":
+            text = "Recorded-depth backbone."
+        elif backbone_is_monocular(name):
+            text = "**Single-view depth** · processes each enabled camera independently."
+        else:
+            text = "**Multi-view depth** · uses the enabled input cameras."
+        self.depth_model_hint.content = text
 
     # ------------------------------------------------------- GT-depth gating
     def _gt_depth_available(self) -> bool:
@@ -631,7 +734,7 @@ class BackboneViewer:
         self.runner.set_long_side(v if v > 0 else None)
         self._set_status(
             f"Input long side -> **{v if v > 0 else 'backbone default'}**. "
-            "Press **Run inference** to apply."
+            "Press **Run depth on current frame** to apply."
         )
 
     # ----------------------------------------------------------- inference
@@ -644,8 +747,11 @@ class BackboneViewer:
             self._set_status("Select at least one input camera.")
             return
 
+        self.tracking.clear()
         name = self.dd_backbone.value
         self._set_status(f"Loading **{name}** + running on {len(ix)} view(s)...")
+        self._configure_backbone()
+        self.runner.set_long_side(int(self.sl_lside.value) or None)
         self.runner.load(name)
         res = self.runner.run(
             self._frame,
@@ -665,9 +771,24 @@ class BackboneViewer:
 
     def _conf_thresh(self) -> float:
         conf = self._result.conf if self._result is not None else None
-        if conf is not None and bool(conf.min() == conf.max()):
-            return float("-inf")  # uniform confidence (e.g. gtdepth): nothing to drop
-        return percentile_conf_threshold(conf, float(self.sl_conf.value))
+        return confidence_threshold(conf, float(self.sl_conf.value))
+
+    def _point_filters(self) -> PointFilters:
+        return PointFilters(
+            stride=int(self.sl_stride.value),
+            drop_conf_pct=float(self.sl_conf.value),
+            crop=(tuple(self.vec_wmin.value), tuple(self.vec_wmax.value))
+            if self.cb_crop.value
+            else None,
+            voxel_size=float(self.sl_voxel.value),
+            sfc_stride=int(self.sl_sfc.value),
+            max_points=getattr(self, "_cloud_max_points", -1),
+        )
+
+    def _apply_fps(self) -> None:
+        self._render_cloud(int(self.sl_fps.value))
+        if self._tracking_frame:
+            self.tracking.render()
 
     def _umeyama_scale(self) -> float | None:
         """The clamped pred->GT Sim(3) scale (for the status line)."""
@@ -679,11 +800,15 @@ class BackboneViewer:
         )
         return float(clamp_scale(s)[0])
 
-    def _render_cloud(self, max_points: int = -1) -> None:
+    def _render_cloud(self, max_points: int | None = None) -> None:
         """Re-render from the cached result; ``max_points > 0`` also runs FPS."""
         if self._result is None or self._run_images is None:
             return
-        align_mode = str(self.dd_align.value)
+        if max_points is not None:
+            self._cloud_max_points = max_points
+        filters = self._point_filters()
+        max_points = filters.max_points
+        align_mode = AlignMode.NONE.value if self._tracking_frame else str(self.dd_align.value)
         if align_mode == AlignMode.METRIC_MONO.value and self._result.metric_scale is None:
             try:
                 self._set_status(
@@ -698,27 +823,27 @@ class BackboneViewer:
                 )
             except Exception as e:
                 self._clear_cloud()
+                summary = log_error(f"metric_mono ({self.dd_metric.value})", e)
                 self._set_status(
-                    f"{_RED}metric_mono ({self.dd_metric.value}): {type(e).__name__}: {e}</span>"
+                    "Metric alignment (`metric_mono`) failed.\n\n" + status_error(summary)
                 )
                 return
         voxel = float(self.sl_voxel.value)
-        crop_lo, crop_hi = self._crop_box()
-        pts, cols = build_point_cloud(
+        cloud = build_point_cloud(
             self._result,
             self._run_images,
             color_mode=self.dd_color.value,
-            stride=int(self.sl_stride.value),
-            conf_thresh=self._conf_thresh(),
             align_mode=align_mode,
-            crop_lo=crop_lo,
-            crop_hi=crop_hi,
-            voxel_size=voxel,
-            sfc_stride=int(self.sl_sfc.value),
-            max_points=max_points,
+            **filters.cloud_options(self._result.conf),
+            return_source_indices=self._tracking_frame,
         )
+        pts, cols = cloud[:2]
         self.server.scene.add_point_cloud(
-            "/cloud", points=pts, colors=cols, point_size=float(self.sl_psize.value)
+            "/cloud",
+            points=pts,
+            colors=cols,
+            point_size=float(self.sl_psize.value),
+            visible=not self._tracking_frame or self.tracking.background.value,
         )
         self._cloud_pts = pts
         if pts.shape[0] > 0:
@@ -751,7 +876,13 @@ class BackboneViewer:
     def _cheap_update(self) -> None:
         if self._suspend or self._result is None:
             return
-        self._guarded(self._render_cloud)
+
+        def redraw():
+            self._render_cloud()
+            if self._tracking_frame:
+                self.tracking.render()
+
+        self._guarded(redraw)
 
     def _clear_cloud(self) -> None:
         self.server.scene.add_point_cloud(
@@ -783,7 +914,10 @@ class BackboneViewer:
         frustums: the predicted reconstruction into its own predicted views (orange
         frustums; skipped for monocular backbones), and — when aligned to GT — the
         aligned cloud into all GT cameras (GT frustums)."""
-        res, mode = self._result, str(self.dd_align.value)
+        res, mode = (
+            self._result,
+            (AlignMode.NONE.value if self._tracking_frame else str(self.dd_align.value)),
+        )
         monocular = res.pred_extrinsics is None
         if monocular and mode in (AlignMode.SIM3_POINTS.value, AlignMode.PRESCALE_GT.value):
             mode = AlignMode.NONE.value
@@ -1145,10 +1279,26 @@ class BackboneViewer:
         """Point every connected client's camera at the current rig (no-op headless)."""
         if self._frame is None:
             return
-        pos, look = _orbit_pose(_camera_centres(self._frame.extrinsics))
         for client in self.server.get_clients().values():
-            client.camera.position = pos
-            client.camera.look_at = look
+            self._frame_client(client)
+
+    def _frame_client(self, client) -> None:
+        if self._frame is None:
+            return
+        result = self.tracking.result
+        if result is not None:
+            points = result.output.tracks_world[0, 0].numpy()
+            points = points[result.output.valid[0, 0].numpy() & np.isfinite(points).all(-1)]
+            if len(points):
+                pos, look = _orbit_pose(points, scale=3.2)
+            else:
+                pos, look = _orbit_pose(_camera_centres(self._frame.extrinsics))
+        elif self.tracking.active_clip is not None and self._cloud_bounds is not None:
+            pos, look = _orbit_pose(np.stack(self._cloud_bounds), scale=2.8)
+        else:
+            pos, look = _orbit_pose(_camera_centres(self._frame.extrinsics))
+        client.camera.position = pos
+        client.camera.look_at = look
 
     def _maybe_frame_scene(self, traj: int) -> None:
         """Frame on trajectory change only, never on a timestep scrub."""
@@ -1183,3 +1333,98 @@ class BackboneViewer:
         if not self.cb_crop.value:
             return None, None
         return torch.tensor(self.vec_wmin.value), torch.tensor(self.vec_wmax.value)
+
+    def load_demo(self) -> None:
+        """Open a reproducible animated scene without loading a neural model."""
+        self.dd_dataset.value = "demo"
+        self._load_dataset()
+        self.tracking.dd_tracker.value = "Analytic demo (no model)"
+        self.tracking.length.value = 48
+        self.tracking.count.value = 768
+        self.vec_wmin.value = (-1.2, -0.6, 1.9)
+        self.vec_wmax.value = (1.2, 0.8, 3.1)
+        self.cb_crop.value = True
+        self.tracking.start_job(background=False)
+        self.server.on_client_connect(lambda event: self._demo_camera(event))
+        for client in self.server.get_clients().values():
+            self._demo_camera(client)
+
+    def _demo_camera(self, client):
+        if self._source is None or self._source.name != "demo":
+            return
+        client.camera.position = (2.0, -2.0, -0.5)
+        client.camera.look_at = (0.0, 0.0, 2.8)
+        client.camera.up_direction = (0.0, -1.0, 0.0)
+
+    def close(self) -> None:
+        self.tracking.close()
+
+    def register_recordings(self, paths) -> None:
+        """Offer previously computed dataset runs without rerunning the models."""
+        from .recording import recording_label
+
+        records = {f"{i + 1}. {recording_label(p)}": str(p) for i, p in enumerate(paths)}
+        with self.dataset_tab:
+            with self.server.gui.add_folder("Saved runs", order=3, expand_by_default=False):
+                picker = self.server.gui.add_dropdown("Open recording", list(records))
+                self.recording_picker = picker
+                self.server.gui.add_markdown(
+                    "Open a cached run to compare, or follow steps 1–3 to compute another clip."
+                )
+        picker.on_update(
+            lambda _: self._guarded(lambda: self._open_recording(records[picker.value]))
+        )
+        self._open_recording(next(iter(records.values())))
+
+    def _open_recording(self, path) -> None:
+        self.tracking.pause()
+        self.tracking.play.disabled = True
+        picker = getattr(self, "recording_picker", None)
+        if picker is not None:
+            picker.disabled = True
+        try:
+            self._load_recording(path)
+        finally:
+            self.tracking._update_playback_controls()
+            if picker is not None:
+                picker.disabled = False
+
+    def _load_recording(self, path) -> None:
+        from .recording import load_recording, recording_label
+        from .tracking import TrackingRun
+
+        value = load_recording(path)
+        clip = value.clip if isinstance(value, TrackingRun) else value
+        self.tracking.pause()
+        if self._source is None or self._source.name != clip.source_name:
+            self.dd_dataset.value = clip.source_name
+            self._load_dataset()
+        self._suspend = True
+        self.dd_traj.value = self._traj_labels[clip.trajectory]
+        self.sl_time.max = max(1, self._source.num_timesteps(clip.trajectory) - 1)
+        self.sl_time.value = clip.indices[0]
+        self._suspend = False
+        self.tracking.set_context(self._source, clip.trajectory)
+        self._selection_context = (id(self._source), clip.trajectory)
+        self._camera_selection = {
+            name: name in clip.camera_names for name in clip.frames[0].cam_names
+        }
+        panel = self.tracking
+        panel.start.value = clip.indices[0]
+        panel.length.value = len(clip.indices)
+        panel.stride.value = clip.indices[1] - clip.indices[0]
+        panel.resolution.value = max(128, min(1024, 16 * round(max(clip.images.shape[-2:]) / 16)))
+        panel.geometry.value = clip.geometry.provenance["source"]
+        panel.point_size.value = 0.006
+        backbone = clip.geometry.provenance.get("backbone")
+        if backbone in self.backbones:
+            self.dd_backbone.value = backbone
+        if value is not clip:
+            from .tracking import TRACKER_LABELS
+
+            name = value.output.metadata.get("tracker")
+            label = next((label for label, key in TRACKER_LABELS.items() if key == name), None)
+            if label is not None:
+                panel.dd_tracker.value = label
+        panel.add_result(value, recording_label(path))
+        self._frame_scene()

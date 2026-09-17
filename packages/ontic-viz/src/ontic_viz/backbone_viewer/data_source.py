@@ -29,6 +29,7 @@ DEFAULT_ROOTS: dict[str, str] = {
 
 #: Which datasets can hand back ground-truth depth (GUI hint for the ``gtdepth`` backbone).
 HAS_GT_DEPTH: dict[str, bool] = {
+    "demo": True,
     "dextris": False,
     "robot-dextris": False,
     "hocap": True,
@@ -177,6 +178,10 @@ def build_source(
     registry: dict | None = None,
 ) -> DataSource:
     """Build the adapter for dataset ``name`` from ``registry`` (``ontic_data.DATASETS``)."""
+    if registry is None and name == "demo":
+        from .demo import DemoSource
+
+        return DemoSource()
     if registry is None:
         from ontic_data import DATASETS as registry
     if name not in registry:

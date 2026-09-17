@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..deps import missing_dependency
 from ..structures.gaussians import Gaussians
 from ._codec import from_tensors, to_tensors
 
@@ -13,8 +14,11 @@ def _safetensors() -> Any:
         import safetensors
         import safetensors.torch
     except ImportError as e:
-        raise ImportError(
-            "safetensors Gaussians files require safetensors; install ontic-lib[safetensors]"
+        raise missing_dependency(
+            "safetensors Gaussians files",
+            package="ontic-lib",
+            extra="safetensors",
+            needs="the `safetensors` package",
         ) from e
     return safetensors
 

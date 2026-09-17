@@ -23,6 +23,14 @@ PRESETS_PATH = Path(
     or Path.home() / ".config" / "ontic" / "backbone_viewer_presets.json"
 )
 
+#: Env var overriding the default error-log location.
+LOG_ENV = "ONTIC_BACKBONE_VIEWER_LOG"
+#: Where :class:`BackboneViewer` appends full tracebacks; the GUI only has room for the
+#: message, so every failure is written here in full.
+LOG_PATH = Path(
+    os.environ.get(LOG_ENV) or Path.home() / ".config" / "ontic" / "backbone_viewer.log"
+)
+
 
 @dataclass
 class ViewConfig:

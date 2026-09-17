@@ -4,6 +4,8 @@ Also places the predicted cameras in the display frame."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import matplotlib
 import numpy as np
 import torch
@@ -13,16 +15,58 @@ from ontic_lib.pointops import (
     align_camera_poses_sim3,
     align_cameras_sim3,
     compute_alignment,
-    furthest_point_sample,
-    space_filling_stride,
+    furthest_point_indices,
+    percentile_conf_threshold,
+    space_filling_stride_indices,
     voxel_pool,
 )
-from ontic_lib.structures import crop_to_aabb
+from ontic_lib.structures import aabb_mask
 from ontic_lib.transforms.rotations import matrix_to_quaternion
 
 from .runner import AlignMode, BackboneResult, metric_unproject
 
 COLOR_MODES = ["RGB", "confidence", "per-view"]
+
+
+def confidence_threshold(conf: Tensor | None, drop_pct: float) -> float:
+    if conf is None:
+        return float("-inf")
+    finite = conf[torch.isfinite(conf)]
+    if not finite.numel():
+        return float("inf")
+    if bool(finite.min() == finite.max()):
+        return float("-inf")
+    threshold = percentile_conf_threshold(finite, drop_pct)
+    # Quantized confidence (e.g. a mask) can put the percentile at the maximum.
+    # Keep the highest-confidence tie group instead of dropping the entire cloud.
+    if threshold == float(finite.max()):
+        maximum = finite.max().float()
+        return float(torch.nextafter(maximum, torch.full_like(maximum, float("-inf"))))
+    return threshold
+
+
+@dataclass(frozen=True)
+class PointFilters:
+    """The display selection, also used to select reference-frame track seeds."""
+
+    stride: int = 1
+    drop_conf_pct: float = 0.0
+    crop: tuple[tuple[float, ...], tuple[float, ...]] | None = None
+    voxel_size: float = 0.0
+    sfc_stride: int = 1
+    max_points: int = -1
+
+    def cloud_options(self, conf: Tensor | None) -> dict:
+        return dict(
+            stride=self.stride,
+            conf_thresh=confidence_threshold(conf, self.drop_conf_pct),
+            crop_lo=None if self.crop is None else self.crop[0],
+            crop_hi=None if self.crop is None else self.crop[1],
+            voxel_size=self.voxel_size,
+            sfc_stride=self.sfc_stride,
+            max_points=self.max_points,
+        )
+
 
 _PALETTE = torch.tensor(
     [
@@ -117,12 +161,17 @@ def build_point_cloud(
     voxel_size: float = 0.0,
     sfc_stride: int = 1,
     max_points: int = -1,
-) -> tuple[np.ndarray, np.ndarray]:
+    return_source_indices: bool = False,
+) -> tuple:
     """``(points (N, 3) float32, colors (N, 3) uint8)`` numpy arrays for viser.
 
     Point-count controls apply in order: stride + confidence (at unprojection), crop
     box, voxel pooling, space-filling-curve stride (grid ``max(voxel_size, 0.004)``),
     furthest-point sampling to ``max_points`` (``<= 0`` disables).
+
+    With ``return_source_indices``, also return flattened depth-pixel indices.
+    Voxel reduction then keeps an actual surface sample per voxel, so displayed
+    points can be lifted as tracker queries without inventing a depth at a centroid.
     """
     depth = result.depth
     if color_mode == "confidence" and result.conf is not None:
@@ -134,15 +183,42 @@ def build_point_cloud(
 
     pc = metric_unproject(result, rgb, align_mode, stride=stride, conf_thresh=conf_thresh)
     points, colors = pc.points, pc.colors
+    source_indices = None
+    if return_source_indices:
+        valid = torch.isfinite(depth) & (depth > 0)
+        if result.conf is not None:
+            valid &= result.conf > conf_thresh
+        source_indices = torch.arange(depth.numel()).reshape(depth.shape)[:, ::stride, ::stride]
+        source_indices = source_indices[valid[:, ::stride, ::stride]]
     if crop_lo is not None and crop_hi is not None:
-        points, colors = crop_to_aabb(points, colors, crop_lo, crop_hi)
-    if voxel_size > 0:
-        points, colors = voxel_pool(points, colors, voxel_size)
+        lo, hi = (torch.as_tensor(a, dtype=points.dtype) for a in (crop_lo, crop_hi))
+        if not bool((hi > lo).all()):
+            raise ValueError("Workspace maximum must exceed minimum on every axis")
+        keep = aabb_mask(points, lo, hi).squeeze(-1)
+        points, colors = points[keep], colors[keep]
+        if source_indices is not None:
+            source_indices = source_indices[keep]
+    if voxel_size > 0 and len(points):
+        if source_indices is None:
+            points, colors = voxel_pool(points, colors, voxel_size)
+        else:
+            _, groups = torch.unique(torch.floor(points / voxel_size), dim=0, return_inverse=True)
+            ix = torch.full((int(groups.max()) + 1,), len(points), dtype=torch.long)
+            ix.scatter_reduce_(0, groups, torch.arange(len(points)), reduce="amin")
+            points, colors, source_indices = points[ix], colors[ix], source_indices[ix]
     if sfc_stride > 1:
-        points, colors = space_filling_stride(points, colors, sfc_stride, voxel_size)
-    if max_points > 0:
-        points, colors = furthest_point_sample(points, colors, max_points)
+        ix = space_filling_stride_indices(points, sfc_stride, voxel_size)
+        points, colors = points[ix], colors[ix]
+        if source_indices is not None:
+            source_indices = source_indices[ix]
+    if 0 < max_points < len(points):
+        ix = furthest_point_indices(points, max_points)
+        points, colors = points[ix], colors[ix]
+        if source_indices is not None:
+            source_indices = source_indices[ix]
 
     points_np = points.numpy().astype(np.float32)
     colors_np = (colors.clamp(0.0, 1.0) * 255).to(torch.uint8).numpy()
+    if return_source_indices:
+        return points_np, colors_np, source_indices
     return points_np, colors_np

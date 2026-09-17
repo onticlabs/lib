@@ -1,26 +1,38 @@
-# ontic_viz — the backbone viewer
+# ontic_viz — geometry and tracking viewer
 
 `ontic_viz` (`packages/ontic-viz`) holds interactive inspection tools over
-`ontic-nn` and `ontic-data`. There is one app today, `ontic_viz.backbone_viewer`:
+`ontic-nn` and `ontic-data`. The shared app, `ontic_viz.backbone_viewer`, combines depth and tracking:
 a headless [viser](https://viser.studio) web GUI that runs any backbone in
 `ontic_nn.wrappers.BACKBONES` (and any metric model in
 `ontic_nn.metric_depth.METRIC_MODELS`) on any dataset in `ontic_data.DATASETS`,
 and shows the lifted point cloud next to the GT camera frustums, with hand
 skeletons, a workspace box, an optional robot overlay, a ruler, and occupancy
 reprojection back into the cameras. The package README
-(`packages/ontic-viz/README.md`) has the GUI walkthrough.
+([packages/ontic-viz/README.md](../packages/ontic-viz/README.md)) has the GUI walkthrough.
+
+The workflow has three steps: **1. Dataset** selects the dataset, trajectory,
+cameras and clip; **2. Depth model** holds backbone selection, conditioning,
+weights, calibration and depth previews; **3. Tracking** selects the tracker,
+query points and boxes, then runs MVTracker, TAPIP3D or TrackCraft3R.
+**4. Display** controls clouds, trails and visibility. Playback remains available
+across all four tabs and uses cached geometry and fixed
+point IDs. The depth-only preview works without a tracker; cached results and
+saved recordings let you compare different backbones on the same trajectory.
+[Real-data trials](tracking_dataset_trials.md) cover HOCAP and SynthRobot.
 
 ## Running
 
 ```bash
-uv run ontic-backbone-viewer --port 8080 --device cuda
+uv run --no-sync ontic-backbone-viewer --port 8080 --device cuda
+uv run --no-sync ontic-backbone-viewer --demo --device cpu
 uv run ontic-backbone-viewer --share            # public share.viser.studio URL, kept alive
 uv run ontic-backbone-viewer --hocap-root /data/hocap --stage val
 ```
 
 Flags: `--host`, `--port` (viser walks up from it when taken; trust the printed
 port), `--device cuda|cuda:N|cpu`, `--stage train|val|test`, `--share`,
-`--presets <json>`, and one `--<dataset>-root <path>` per registry key
+`--presets <json>`, `--demo`, `--recording <viewer.npz>` (repeatable),
+`--model-config <json>`, and one `--<dataset>-root <path>` per registry key
 (defaults in `data_source.DEFAULT_ROOTS`, dev-box `/mnt/fast/...` paths).
 Named presets (`ViewConfig`: stride, drop-lowest-conf %, voxel size, SFC
 stride, FPS budget, point size, colour mode, alignment mode, workspace box)
@@ -69,4 +81,6 @@ does not take `root=` (genesis takes `roots=`).
 | `data_source` | `Frame` (all cameras of one timestep), `GenericSource` / `build_source` over `ontic_data.DATASETS`, `DEFAULT_ROOTS`, `HAS_GT_DEPTH`, `CFG_KWARGS` |
 | `robot_model` | `DuoRobotModel`: FR3 Duo link geometry posed from recorded joint angles (mujoco) |
 | `share_tunnel` | `patch_viser_tunnel` / `start_share_watchdog`: keep the share URL alive, re-issue on drop |
+| `tracking`, `tracking_panel` | Calibrated clip preparation, query selection, trackers, cached playback/history and NPZ export |
+| `recording`, `rerun_export` | Portable viewer archives and optional headless Rerun recordings |
 | `cli` | `build_parser` / `main` — the `ontic-backbone-viewer` entry point |

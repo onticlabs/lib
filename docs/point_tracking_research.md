@@ -1,7 +1,8 @@
 # 3D point tracking: candidates and proposed Ontic interface
 
-Research date: 2026-09-17. Proposal for discussion; no tracker implementation or
-local model benchmark has been performed. The working assumption is synchronized
+Research date: 2026-09-17. The first three adapters are now implemented under
+`ontic_nn.trackers`; see the [API and setup](point_tracking.md). No local pretrained
+model benchmark has been performed. The working assumption is synchronized
 RGB video with one or more views, supplied or estimated geometry, and offline
 inference for the first integration. Point-cloud-only input is covered separately.
 
@@ -140,7 +141,8 @@ flowchart LR
 Use explicit **batch, time, view** axes. Single-view input retains `V=1`. For a
 first version, accept a rectangular synchronized clip with stable view ordering;
 reject missing frames instead of treating padded black images as observations.
-The following is a schema sketch, not an implemented API:
+The following is the original schema sketch; the implemented API and helper
+methods are documented in [Point tracking](point_tracking.md):
 
 ```python
 @dataclass
@@ -290,7 +292,8 @@ reprojection consistency, latency and peak VRAM. Report geometry time separately
 from tracking time, and also end-to-end. Fix frames, resolution, query count,
 depth source, camera source and alignment when comparing trackers.
 
-The first implementation should consist of the common contract, geometry/query
-adapters, MVTracker and TAPIP3D wrappers, and viewer trajectory playback. A lifted
-CoTracker3 baseline is useful for diagnosis. Then add dense and joint models once
-the same geometry and query identities can be compared reliably.
+The first implementation supplies the common contract, geometry/query adapters,
+and MVTracker, TAPIP3D and TrackCraft3R wrappers. Viewer trajectory playback and a
+lifted CoTracker3 diagnostic baseline remain follow-up integration work. Add other
+dense and joint models once the same geometry and query identities can be
+compared reliably.

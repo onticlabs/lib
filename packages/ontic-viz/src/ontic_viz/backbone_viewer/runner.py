@@ -95,14 +95,14 @@ def metric_model_names() -> list[str]:
     return (["da3"] if "da3" in keys else []) + [k for k in keys if k != "da3"]
 
 
-def build_backbone(name: str, long_side: int | None = None) -> BackboneBase:
+def build_backbone(name: str, long_side: int | None = None, **options) -> BackboneBase:
     """Build a pretrained backbone from its registered config; ``long_side`` overrides
     the backbone's canonical input resolution."""
     from ontic_nn.wrappers import BACKBONES
 
     if name not in BACKBONES:
         raise ValueError(f"unknown backbone {name!r}; choose from {list(BACKBONES)}")
-    cfg = BACKBONES[name]()
+    cfg = BACKBONES[name](**options)
     if long_side is not None:
         cfg.long_side = long_side
     return cfg.build()
@@ -194,6 +194,7 @@ def metric_unproject(
         confidence=result.conf,
         stride=stride,
         confidence_threshold=conf_thresh,
+        minimum_depth=0.0,
     )
 
 
@@ -215,6 +216,7 @@ class BackboneRunner:
     ):
         self.device = device
         self._builder = builder
+        self._model_options: dict[str, dict] = {}
         self.long_side = long_side
         self._default_long_side: int | None = None
         self._name: str | None = None
@@ -238,11 +240,23 @@ class BackboneRunner:
         if name == self._name and self._backbone is not None:
             return
         self._free()
-        backbone = self._builder(name)
+        backbone = self._builder(name, **self._model_options.get(name, {}))
         self._default_long_side = getattr(getattr(backbone, "cfg", None), "long_side", None)
         self._backbone = backbone.to(self.device).eval()
         self._name = name
         self._apply_long_side()
+
+    def configure(
+        self, name: str, *, checkpoint_path: str = "", allow_download: bool = False
+    ) -> None:
+        options = {"checkpoint_path": checkpoint_path or None, "allow_download": allow_download}
+        if options != self._model_options.get(name):
+            if self._name == name:
+                self._free()
+            self._model_options[name] = options
+
+    def model_key(self, name: str) -> tuple:
+        return (name, tuple(sorted(self._model_options.get(name, {}).items())))
 
     def set_long_side(self, long_side: int | None) -> None:
         """Override the input resolution of the active (and any future) backbone;
@@ -262,6 +276,11 @@ class BackboneRunner:
         self._backbone = None
         self._name = None
         _free_cuda()
+
+    def release(self) -> None:
+        """Release inference models before another stage needs GPU memory."""
+        self._free()
+        self._free_metric()
 
     def _free_metric(self) -> None:
         if self._metric_model is None:

@@ -10,6 +10,8 @@ to the dev-box paths in :data:`data_source.DEFAULT_ROOTS`; override per dataset 
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
 
 import viser
 
@@ -24,6 +26,18 @@ def build_parser(names: list[str]) -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8080)
     p.add_argument("--device", default="cuda", help="cuda | cuda:N | cpu")
     p.add_argument("--stage", default="val", choices=["train", "val", "test"])
+    p.add_argument(
+        "--demo", action="store_true", help="open the analytic tracking demo (no weights required)"
+    )
+    p.add_argument(
+        "--recording",
+        action="append",
+        default=[],
+        help="saved viewer .npz run; repeat for comparisons",
+    )
+    p.add_argument(
+        "--model-config", type=Path, help="JSON with backbone checkpoints and tracker defaults"
+    )
     p.add_argument("--share", action="store_true", help="request a public viser share URL")
     p.add_argument("--presets", default=None, help="presets JSON store (default: user config)")
     for name in names:
@@ -31,6 +45,18 @@ def build_parser(names: list[str]) -> argparse.ArgumentParser:
             f"--{name}-root", default=DEFAULT_ROOTS.get(name), help=f"{name} dataset root"
         )
     return p
+
+
+def apply_model_config(viewer: BackboneViewer, config: dict) -> None:
+    viewer._backbone_paths.update(config.get("backbone_checkpoints", {}))
+    viewer._on_backbone_change()
+    trackers = dict(config.get("trackers", {}))
+    # Older configs describe MVTracker alone; never apply these paths to other trackers.
+    legacy = config.get("tracker")
+    if legacy:
+        name = legacy.get("name", "mvtracker")
+        trackers[name] = {**legacy, **trackers.get(name, {})}
+    viewer.tracking.configure_model_files(trackers)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -43,9 +69,16 @@ def main(argv: list[str] | None = None) -> None:
     }
 
     server = viser.ViserServer(host=args.host, port=args.port)
-    BackboneViewer(
+    viewer = BackboneViewer(
         server, device=args.device, roots=roots, stage=args.stage, presets_path=args.presets
     )
+    if args.model_config:
+        config = json.loads(args.model_config.read_text())
+        apply_model_config(viewer, config)
+    if args.recording:
+        viewer.register_recordings(args.recording)
+    elif args.demo:
+        viewer.load_demo()
     print(
         f"[backbone-viewer] serving on port {server.get_port()} (device={args.device}). "
         "Ctrl-C to quit."
@@ -66,7 +99,11 @@ def main(argv: list[str] | None = None) -> None:
         print("[backbone-viewer] requesting public share URL (share.viser.studio)...", flush=True)
         report_share_url(server.request_share_url())
         start_share_watchdog(server, report_share_url)
-    server.sleep_forever()
+    try:
+        server.sleep_forever()
+    finally:
+        viewer.close()
+        server.stop()
 
 
 if __name__ == "__main__":

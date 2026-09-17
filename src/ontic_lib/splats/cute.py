@@ -29,6 +29,8 @@ import math
 import torch
 from torch import Tensor
 
+from ..deps import missing_dependency
+
 _ALPHA_THRESH = 1.0 / 255.0
 _T_EPS = 1e-4
 _CACHE: dict = {}
@@ -39,8 +41,12 @@ def _cutlass():
         import cutlass
         import cutlass.cute  # noqa: F401
     except ImportError as error:
-        raise RuntimeError(
-            "splats.cute requires the CuTeDSL — install the extra: pip install ontic-lib[cute]"
+        raise missing_dependency(
+            "splats.cute",
+            package="ontic-lib",
+            extra="cute",
+            needs="the CuTeDSL (`nvidia-cutlass-dsl`)",
+            error_type=RuntimeError,
         ) from error
     # The DSL resolves the kernel's (string) type annotations against this
     # module's globals, so the lazy import must publish `cute`/`cutlass` there.
