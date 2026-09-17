@@ -1,0 +1,69 @@
+[project]
+name = "ontic-nn"
+version = "0.5.0"
+description = "Ontic neural building blocks: PTv3 point transformer, DINOv2, DPT, plain point transformer"
+requires-python = ">=3.10"
+dependencies = [
+    "ontic-lib",
+    "torch>=2.4",
+    "einops>=0.7",
+    "jaxtyping>=0.2",
+]
+
+[project.optional-dependencies]
+ptv3 = []                      # pure torch by default; accelerators below
+spconv = ["spconv-cu120>=2.3; python_version < '3.12'"]  # optional sparse-conv backend for PTv3 CPE/stem (no wheels for 3.12+)
+# flash-attn must be built against the local torch; install it manually, it is not an extra.
+timm = ["timm>=0.9"]            # only for loading DINOv2 pretrained weights via timm, if used
+
+# Backbone wrappers (ontic_nn.wrappers) and metric depth models (ontic_nn.metric_depth).
+# Each extra lists the pip-installable pieces the upstream needs at import / build time; the
+# research package itself is not on PyPI — install it from the linked repository (a clone on
+# PYTHONPATH / a .pth file, or `pip install --no-deps <clone>`). Weights come from the HF hub.
+da3 = [  # https://github.com/ByteDance-Seed/Depth-Anything-3  (package `depth_anything_3`)
+    "huggingface_hub>=0.24", "safetensors>=0.4", "omegaconf>=2.3", "addict>=2.4",
+    "opencv-python>=4.8", "pillow>=10", "trimesh>=4", "imageio>=2.30", "moviepy>=1.0.3",
+    "tqdm>=4.60", "requests>=2.28", "torchvision>=0.19",
+]
+ma = [  # https://github.com/facebookresearch/map-anything  (package `mapanything`; `uniception` is on PyPI)
+    "huggingface_hub>=0.24", "safetensors>=0.4", "uniception==0.1.6", "hydra-core>=1.3",
+    "pillow-heif>=0.15", "opencv-python-headless>=4.8", "torchvision>=0.19", "timm>=0.9",
+]
+vggt = [  # https://github.com/facebookresearch/vggt-omega  (package `vggt_omega`; gated HF checkpoint)
+    "huggingface_hub>=0.24", "safetensors>=0.4", "opencv-python>=4.8", "pillow>=10",
+]
+pi3x = [  # https://github.com/yyfz/Pi3  (package `pi3`)
+    "huggingface_hub>=0.24", "safetensors>=0.4",
+]
+dvlt = [  # https://github.com/nv-tlabs/dvlt  (package `dvlt`)
+    "huggingface_hub>=0.24", "safetensors>=0.4", "accelerate>=1.8", "hydra-core>=1.3",
+    "omegaconf>=2.3", "scipy>=1.10", "opencv-python>=4.8", "pillow>=10", "open3d>=0.18",
+    "plotly>=5",
+]
+moge3 = [  # https://github.com/microsoft/MoGe  (package `moge`, plus git-only `utils3d_moge` and
+    # `flex-gemm` from https://github.com/EasternJournalist/utils3d-moge and
+    # https://github.com/JeffreyXiang/FlexGEMM; FlexGEMM wants triton>=3.1)
+    "huggingface_hub>=0.24", "scipy>=1.8", "opencv-python-headless>=4.8", "pillow>=10",
+    "trimesh>=4", "torchvision>=0.19",
+]
+depthpro = [  # https://github.com/apple/ml-depth-pro  (package `depth_pro`)
+    "huggingface_hub>=0.24", "timm>=0.9", "pillow-heif>=0.15",
+]
+metric3d = [  # https://github.com/YvanYin/Metric3D  via torch.hub (`yvanyin/metric3d`); the hub code
+    # imports the mmcv 1.x API (Config, DictAction, ...), provide it with mmengine + a small shim.
+    "mmengine>=0.10", "timm>=0.9", "opencv-python>=4.8",
+]
+unidepth = [  # https://github.com/lpiccinelli-eth/UniDepth  (package `unidepth`, install --no-deps)
+    "huggingface_hub>=0.24", "safetensors>=0.4", "timm>=0.9", "xformers", "scipy>=1.10",
+    "opencv-python>=4.8", "torchvision>=0.19",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ontic_nn"]
+
+[tool.uv.sources]
+ontic-lib = { workspace = true }
