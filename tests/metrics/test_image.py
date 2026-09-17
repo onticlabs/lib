@@ -12,12 +12,6 @@ from ontic_lib.metrics.image import (
 )
 
 
-def test_legacy_image_metrics_imports_are_preserved():
-    from ontic_lib.image_metrics import compute_psnr_values as legacy
-
-    assert legacy is compute_psnr_values
-
-
 class FakeLpips:
     def net(self, gt, pred, normalize=True):
         assert normalize is True

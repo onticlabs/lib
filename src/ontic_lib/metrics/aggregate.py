@@ -1,3 +1,5 @@
+"""Weighted running mean over per-step metric dicts (:class:`MetricsAccumulator`)."""
+
 from __future__ import annotations
 
 class MetricsAccumulator:
