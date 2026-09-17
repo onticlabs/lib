@@ -5,6 +5,7 @@ Standalone (not tied to any renderer). See the package-level conventions in
 """
 
 from .intrinsics import denormalize_intrinsics, normalize_intrinsics, resize_intrinsics
+from .occupancy import overlay_masks_on_images, points_with_radius, project_occupancy
 from .projection import (
     project_camera_points,
     project_world_points,
@@ -16,7 +17,10 @@ from .rays import world_pixel_size, world_rays
 __all__ = [
     "denormalize_intrinsics",
     "normalize_intrinsics",
+    "overlay_masks_on_images",
+    "points_with_radius",
     "project_camera_points",
+    "project_occupancy",
     "project_world_points",
     "resize_intrinsics",
     "sample_image_grid",
