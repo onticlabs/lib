@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from types import ModuleType
 
 import pytest
 import torch
@@ -22,6 +23,7 @@ from ontic_nn.wrappers import (
     resize_to_long_side,
     resolve_checkpoint,
 )
+from ontic_nn.wrappers import dvlt
 from ontic_nn.wrappers import gtdepth as gtdepth_mod
 
 # backbone key -> top-level research module its build() imports first
@@ -208,3 +210,49 @@ def test_gtdepth_forward_with_tiny_dinov2(monkeypatch):
 def test_gtdepth_missing_local_checkpoint_raises():
     with pytest.raises(FileNotFoundError):
         GTDepthBackboneConfig(checkpoint_path="/nonexistent/dinov2.pth").build()
+
+
+def test_dvlt_does_not_shadow_an_unloaded_modern_torch_module(monkeypatch):
+    name = "torch.nn.attention.flex_attention"
+    monkeypatch.delitem(sys.modules, name, raising=False)
+    monkeypatch.delattr(torch.nn.attention, "flex_attention", raising=False)
+    actual = ModuleType(name)
+    actual._Backend = object()
+
+    def import_module(module):
+        assert module == name
+        monkeypatch.setitem(sys.modules, name, actual)
+        return actual
+
+    monkeypatch.setattr(dvlt.importlib, "import_module", import_module)
+    dvlt.install_flex_attention_shim()
+    assert sys.modules[name] is actual
+
+
+def test_dvlt_still_supports_torch_without_flex_attention(monkeypatch):
+    name = "torch.nn.attention.flex_attention"
+    monkeypatch.delitem(sys.modules, name, raising=False)
+
+    def import_module(module):
+        raise ModuleNotFoundError(name=module)
+
+    monkeypatch.setattr(dvlt.importlib, "import_module", import_module)
+    try:
+        dvlt.install_flex_attention_shim()
+        with pytest.raises(RuntimeError, match="torch >= 2.5"):
+            sys.modules[name].flex_attention()
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_dvlt_does_not_hide_a_broken_modern_torch_install(monkeypatch):
+    name = "torch.nn.attention.flex_attention"
+    monkeypatch.delitem(sys.modules, name, raising=False)
+
+    def import_module(module):
+        raise ModuleNotFoundError(name="some_torch_dependency")
+
+    monkeypatch.setattr(dvlt.importlib, "import_module", import_module)
+    with pytest.raises(ModuleNotFoundError):
+        dvlt.install_flex_attention_shim()
+    assert name not in sys.modules

@@ -21,7 +21,7 @@ ply = ["plyfile>=1.0"]  # io: .ply particle files
 all = ["ontic-lib[wandb,e3nn,gsplat,safetensors,ply]"]
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6", "torch>=2.4", "ontic-nn[ptv3]", "ontic-data", "ontic-viz"]
+dev = ["pytest>=8", "ruff>=0.6", "torch>=2.4", "ontic-nn[backbones,ptv3]", "ontic-data", "ontic-viz"]
 
 [tool.uv.workspace]
 members = ["packages/*"]

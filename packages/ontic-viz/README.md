@@ -7,6 +7,16 @@ registered dataset and shows the lifted point cloud next to the GT cameras.
 
 ## Running
 
+Install all backbone sources and support dependencies into the existing
+environment, preserving its PyTorch/CUDA versions:
+
+```bash
+uv run --no-sync python scripts/install_backbones.py
+```
+
+See [backbone setup and verification](../ontic-nn/README.md#geometry-backbone-setup)
+for prerequisites and import checks.
+
 ```bash
 uv run ontic-backbone-viewer --port 8080 --device cuda
 # from your laptop:

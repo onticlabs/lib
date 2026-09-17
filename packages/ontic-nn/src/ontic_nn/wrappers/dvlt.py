@@ -7,6 +7,7 @@ Patch features are tapped either from the recurrent state (``"loop"``) or from D
 
 from __future__ import annotations
 
+import importlib
 import sys
 import types
 from dataclasses import dataclass
@@ -37,11 +38,17 @@ def install_flex_attention_shim() -> None:
     DVLT imports ``flex_attention`` at module import but only calls it on the
     ``block_mask`` path, which pose-free inference never takes. No-op when torch has it.
     """
-    import torch.nn.attention as tna
-
-    if hasattr(tna, "flex_attention") or "torch.nn.attention.flex_attention" in sys.modules:
+    name = "torch.nn.attention.flex_attention"
+    # Recent torch versions do not expose the submodule on the parent until it
+    # is imported. Checking hasattr(parent, ...) would shadow the real module
+    # with our old-torch stub and break torch.compile's internal imports.
+    try:
+        importlib.import_module(name)
         return
-    mod = types.ModuleType("torch.nn.attention.flex_attention")
+    except ModuleNotFoundError as exc:
+        if exc.name != name:
+            raise
+    mod = types.ModuleType(name)
 
     def unavailable(*_args, **_kwargs):
         raise RuntimeError(
@@ -49,7 +56,7 @@ def install_flex_attention_shim() -> None:
         )
 
     mod.flex_attention = unavailable
-    sys.modules["torch.nn.attention.flex_attention"] = mod
+    sys.modules[name] = mod
 
 
 @register_backbone("dvlt")

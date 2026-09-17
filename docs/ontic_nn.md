@@ -179,9 +179,12 @@ resizes internally to its `long_side` (patch-snapped), and returns a
 `BackboneOutput`. Importing `ontic_nn.wrappers` fills the `BACKBONES` registry
 (`name -> config class`); the research package itself is imported inside
 `build()` / `forward` and the `ImportError` names the `ontic-nn[<extra>]` extra
-and the repository. The extras carry only the PyPI pieces the upstream needs —
-the research package comes from the linked repo (clone on `PYTHONPATH` or
-`pip install --no-deps`), weights from the HF hub.
+and the repository. Individual extras carry the support dependencies. For all
+viewer backbones, run `uv run --no-sync python scripts/install_backbones.py`
+from the workspace root: it installs `ontic-nn[backbones]` plus pinned research
+sources while preserving the environment's PyTorch/CUDA stack. See
+[setup and verification](../packages/ontic-nn/README.md#geometry-backbone-setup).
+Weights come separately from the HF hub.
 
 **Contract.** `BackboneConfig` (dataclass): freezing switches
 (`freeze_backbone`, `freeze_dpt_head`, `freeze_cam_dec`, `freeze_cam_enc`),

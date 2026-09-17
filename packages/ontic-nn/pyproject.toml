@@ -15,6 +15,7 @@ ptv3 = []                      # pure torch by default; accelerators below
 spconv = ["spconv-cu120>=2.3; python_version < '3.12'"]  # optional sparse-conv backend for PTv3 CPE/stem (no wheels for 3.12+)
 # flash-attn must be built against the local torch; install it manually, it is not an extra.
 timm = ["timm>=0.9"]            # only for loading DINOv2 pretrained weights via timm, if used
+backbones = ["ontic-nn[da3,ma,vggt,pi3x,dvlt,moge3]"]  # source setup: scripts/install_backbones.py
 
 # Backbone wrappers (ontic_nn.wrappers) and metric depth models (ontic_nn.metric_depth).
 # Each extra lists the pip-installable pieces the upstream needs at import / build time; the
@@ -22,12 +23,14 @@ timm = ["timm>=0.9"]            # only for loading DINOv2 pretrained weights via
 # PYTHONPATH / a .pth file, or `pip install --no-deps <clone>`). Weights come from the HF hub.
 da3 = [  # https://github.com/ByteDance-Seed/Depth-Anything-3  (package `depth_anything_3`)
     "huggingface_hub>=0.24", "safetensors>=0.4", "omegaconf>=2.3", "addict>=2.4",
-    "opencv-python>=4.8", "pillow>=10", "trimesh>=4", "imageio>=2.30", "moviepy>=1.0.3",
+    "opencv-python>=4.8", "pillow>=10", "trimesh>=4", "imageio>=2.30", "moviepy>=1.0.3,<2",
     "tqdm>=4.60", "requests>=2.28", "torchvision>=0.19",
+    "e3nn>=0.5", "evo>=1.29", "pycolmap>=3.12", "plyfile>=1.0",
 ]
-ma = [  # https://github.com/facebookresearch/map-anything  (package `mapanything`; `uniception` is on PyPI)
-    "huggingface_hub>=0.24", "safetensors>=0.4", "uniception==0.1.6", "hydra-core>=1.3",
+ma = [  # mapanything + UniCeption sources are pinned by scripts/install_backbones.py
+    "huggingface_hub>=0.24", "safetensors>=0.4", "hydra-core>=1.3",
     "pillow-heif>=0.15", "opencv-python-headless>=4.8", "torchvision>=0.19", "timm>=0.9",
+    "natsort>=8", "orjson>=3", "python-box>=7", "scikit-learn>=1.4", "termcolor>=2",
 ]
 vggt = [  # https://github.com/facebookresearch/vggt-omega  (package `vggt_omega`; gated HF checkpoint)
     "huggingface_hub>=0.24", "safetensors>=0.4", "opencv-python>=4.8", "pillow>=10",
@@ -37,14 +40,16 @@ pi3x = [  # https://github.com/yyfz/Pi3  (package `pi3`)
 ]
 dvlt = [  # https://github.com/nv-tlabs/dvlt  (package `dvlt`)
     "huggingface_hub>=0.24", "safetensors>=0.4", "accelerate>=1.8", "hydra-core>=1.3",
-    "omegaconf>=2.3", "scipy>=1.10", "opencv-python>=4.8", "pillow>=10", "open3d>=0.18",
-    "plotly>=5",
+    "omegaconf>=2.3", "scipy>=1.10", "opencv-python>=4.8", "pillow>=10",
+    "open3d>=0.18; python_version < '3.13'", "open3d>=0.20; python_version >= '3.13'",
+    "plotly>=5", "pydantic>=2", "rich>=13",
 ]
 moge3 = [  # https://github.com/microsoft/MoGe  (package `moge`, plus git-only `utils3d_moge` and
     # `flex-gemm` from https://github.com/EasternJournalist/utils3d-moge and
-    # https://github.com/JeffreyXiang/FlexGEMM; FlexGEMM wants triton>=3.1)
+    # https://github.com/JeffreyXiang/FlexGEMM; pinned FlexGEMM needs triton>=3.2)
     "huggingface_hub>=0.24", "scipy>=1.8", "opencv-python-headless>=4.8", "pillow>=10",
     "trimesh>=4", "torchvision>=0.19",
+    "moderngl>=5.12", "triton>=3.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 depthpro = [  # https://github.com/apple/ml-depth-pro  (package `depth_pro`)
     "huggingface_hub>=0.24", "timm>=0.9", "pillow-heif>=0.15",
