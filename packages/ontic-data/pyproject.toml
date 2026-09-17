@@ -15,7 +15,7 @@ dependencies = [
 video = ["torchcodec>=0.1"]                        # VideoReader(backend="torchcodec"): taco, dextris, synthrobot
 decord = ["decord>=0.6; python_version < '3.12'"]  # VideoReader(backend="decord") (no wheels for 3.12+)
 hdf5 = ["h5py>=3.10"]                              # synthrobot trajectory stores
-opencv = ["opencv-python-headless>=4.8"]           # hand overlays, hocap frame decoding
+opencv = ["opencv-python-headless>=4.8"]           # hand overlays, hocap frames, robot-dextris video
 hocap = ["ontic-data[hdf5,opencv]", "scipy>=1.11"]
 tables = ["pandas>=2.0"]                           # taco_info.csv, dextris/physinone meta CSVs
 images = ["pillow>=10"]                            # genesis, physinone frames

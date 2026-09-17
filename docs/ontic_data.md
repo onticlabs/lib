@@ -55,6 +55,7 @@ view sampler still runs over the full horizon so batches stay bit-exact.
 | `hocap` | `HocapDatasetCfg` | `root` | 8 RealSense cams, hand labels, optional depth / masks | `hocap` (= `hdf5` + `opencv` + scipy) |
 | `taco` | `TacoDatasetCfg` | `root` | 12 cams at 30 FPS, per-camera mp4s, hand / object poses | `video` (or `decord`), `tables` |
 | `dextris` | `DextrisDatasetCfg` | `root` | 8 cams `P00..P07` at 60 FPS, mp4s, hand tracking | `video` (or `decord`), `tables` |
+| `robot-dextris` | `RobotDextrisDatasetCfg` | `root` | DEXTRIS calibration/videos in `<root>/<sample>/`; no hand labels or default split | `opencv`, `tables` |
 | `physinone` | `PhysInOneDatasetCfg` | `root` | synthetic physics scenes, static + moving camera, depth / seg | `images`, `tables` |
 | `synthrobot` | `SynthRobotDatasetCfg` | `root` | bimanual `franka_duo` manipulation, h5 stores + RGB / depth mp4s | `hdf5`, `video` (or `decord`), `tables`; `robot` for `action_mode="robot_points"` |
 
@@ -70,7 +71,7 @@ resolution by `fps`.
 | `view_sampler` | `ViewSamplerCfg` (`num_context_views`, `num_target_views`, `target_includes_context`, fixed `context_views`, `paired_views` + extras) and `ViewSampler`: sorted context / target indices without replacement; `build_camera_pairs` |
 | `collate` | `collate_examples` (`default_collate` except `actions`), `collate_actions` (zero-pad per key), `harmonize_target_horizon` (truncate to batch-min horizon), `worker_init_fn` |
 | `shims` | Example-level transforms: `apply_augmentation_shim` (random horizontal mirror, cameras fixed up), `apply_crop_shim` (rescale + centre crop to `(H, W)`, intrinsics fixed), `apply_patch_shim` (crop to patch multiples) |
-| `video` | `VideoReader(path, backend)`: random-access `(T, H, W, 3)` uint8 frames via `torchcodec` (default) or `decord`; `has_video_backend` |
+| `video` | `VideoReader(path, backend)`: random-access `(T, H, W, 3)` uint8 frames via `torchcodec` (default), `decord` or `opencv`; `has_video_backend` |
 | `depth_codec` | Hue-log depth-in-RGB-video codec: `encode_depth_to_rgb`, `decode_rgb_to_depth`, `decode_rgb_to_unit_log`, `decode_unit_log_torch` (training-side), `classify` into `VALID` / `SKY` / `HOLE` |
 | `robot` | `RobotKinematics` (URDF / MJCF forward kinematics), `sample_action_points` / `sample_surface_points`, `to_action_tensor`, `franka_duo_kinematics`; the robotics checkout is found as a sibling or via `ONTIC_ROBOTICS_REPO` |
 | `hand` | 21-joint hand keypoints: `project_points_w2c`, `c2w_and_norm_K_to_w2c`, `draw_hand_skeleton[_alpha]`, `overlay_hand_skeletons`, `overlay_hand_trail` (cv2) |
@@ -83,7 +84,7 @@ resolution by `fps`.
 | `ontic-data[video]` | `torchcodec` | `VideoReader(backend="torchcodec")`: taco, dextris, synthrobot |
 | `ontic-data[decord]` | `decord` (Python < 3.12) | `VideoReader(backend="decord")` |
 | `ontic-data[hdf5]` | `h5py` | synthrobot trajectory stores, hocap packed frames |
-| `ontic-data[opencv]` | `opencv-python-headless` | hand overlays, hocap frame decoding |
+| `ontic-data[opencv]` | `opencv-python-headless` | hand overlays, hocap frames, robot-dextris video decoding |
 | `ontic-data[hocap]` | `hdf5` + `opencv` + `scipy` | the HO-Cap loader |
 | `ontic-data[tables]` | `pandas` | `taco_info.csv`, dextris / physinone / synthrobot meta CSVs |
 | `ontic-data[images]` | `pillow` | genesis, physinone frames |

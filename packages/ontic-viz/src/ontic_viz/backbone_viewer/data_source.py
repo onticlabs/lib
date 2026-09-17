@@ -8,14 +8,18 @@ Every ``ontic_data`` dataset builds a ``TemporalSceneDataset`` exposing
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Lock
 from typing import Callable, Protocol, runtime_checkable
 
 import torch
 from torch import Tensor
 
+from ontic_data.temporal import TemporalSceneDataset
+
 #: Dev-box dataset roots (local ``/mnt/fast`` == cluster ``/fast``); override per CLI flag.
 DEFAULT_ROOTS: dict[str, str] = {
     "dextris": "/mnt/fast/mzhobro/dextris_dataset",
+    "robot-dextris": "/mnt/fast/mzhobro/trailer-demo",
     "hocap": "/mnt/fast/mzhobro/hocap_dataset2/hocap_dataset",
     "taco": "/mnt/fast/mzhobro/taco_dataset_resized",
     "genesis": "/mnt/fast/mzhobro/datasets/soft_genesis_elastic",
@@ -26,6 +30,7 @@ DEFAULT_ROOTS: dict[str, str] = {
 #: Which datasets can hand back ground-truth depth (GUI hint for the ``gtdepth`` backbone).
 HAS_GT_DEPTH: dict[str, bool] = {
     "dextris": False,
+    "robot-dextris": False,
     "hocap": True,
     "taco": False,
     "genesis": False,
@@ -102,6 +107,9 @@ class GenericSource:
     def __init__(self, name: str, ds) -> None:
         self.name = name
         self.ds = ds
+        self._frame_lock = Lock()
+        self._scene = None
+        self._scene_traj = None
         labels = ds.record_labels()
         if len(set(labels)) < len(labels):
             labels = [f"{i:03d}_{label}" for i, label in enumerate(labels)]
@@ -114,12 +122,22 @@ class GenericSource:
         return int(self.ds.record_n_frames(traj))
 
     def get_frame(self, traj: int, t: int, with_depth: bool = False) -> Frame:
-        try:
-            d = self.ds.load_sequence_views(traj, t, with_depth=with_depth, with_robot=True)
-        except NotImplementedError:
-            # A depth stream the loader refuses to decode: fall back to RGB-only so
-            # the GUI reports "no GT depth" instead of drawing wrong geometry.
-            d = self.ds.load_sequence_views(traj, t, with_depth=False, with_robot=True)
+        # Keep only this source's current trajectory open. Serialize reads because
+        # playback and background tracking can otherwise seek the same decoder.
+        with self._frame_lock:
+            kwargs = {"with_robot": True}
+            if isinstance(self.ds, TemporalSceneDataset):
+                if self._scene_traj != traj:
+                    self._scene = None
+                    self._scene_traj = None
+                    self._scene = self.ds._open_scene(self.ds.records[traj])
+                    self._scene_traj = traj
+                kwargs["scene_view"] = self._scene
+            try:
+                d = self.ds.load_sequence_views(traj, t, with_depth=with_depth, **kwargs)
+            except NotImplementedError:
+                # An undecodable depth stream still permits calibrated RGB viewing.
+                d = self.ds.load_sequence_views(traj, t, with_depth=False, **kwargs)
         try:
             hands = present_hands_from_action(d.get("actions") or {})
         except Exception:

@@ -250,6 +250,8 @@ class TemporalSceneDataset(Dataset):
         target_hw: tuple[int, int] | None = None,
         with_depth: bool = False,
         with_robot: bool = False,
+        *,
+        scene_view: SceneView | None = None,
     ) -> dict:
         """ALL cameras of one (record, timestep).
 
@@ -257,9 +259,11 @@ class TemporalSceneDataset(Dataset):
         normalised, ``index`` (camera names), ``scene``; ``depth`` when asked for and
         available; ``actions`` (``(1, P, 4)`` per key) when the dataset has them;
         ``robot`` when ``with_robot`` and the dataset records agent state.
+        A viewer may supply its current ``scene_view`` to reuse open video readers;
+        the caller owns that handle and must serialize concurrent reads.
         """
         rec = self.records[rec_ix]
-        sv = self._open_scene(rec)
+        sv = self._open_scene(rec) if scene_view is None else scene_view
         hw = tuple(target_hw) if target_hw is not None else tuple(self.cfg.image_shape)
         all_ixs = torch.arange(len(sv.cam_names))
         views = sv.load_views(all_ixs, frame_idx, hw, depth=with_depth, side="viewer")

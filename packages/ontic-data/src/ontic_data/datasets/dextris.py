@@ -11,14 +11,20 @@ On-disk layout::
 Actions are ``left_hand`` / ``right_hand`` ``(T, 1, 21, 4)`` world-frame keypoints with a
 per-frame presence bit (missing frames zero-filled). A ``dextris_info.csv`` is read with
 pandas when present (extra ``tables``); otherwise samples are discovered on disk.
+``RobotDextrisDatasetCfg`` uses the same calibration and videos in a flat
+``<root>/<sample>/`` layout, without hand annotations or a train/validation split.
 """
 
 from __future__ import annotations
 
+import csv
 import json
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import torch
@@ -48,6 +54,8 @@ class DextrisDatasetCfg(DatasetCfg):
     workspace_max: list[float] | None = field(default_factory=lambda: [0.5, 0.69, 0.544])
 
     tasks: list[str] = field(default_factory=lambda: ["pickUp"])
+    flat_layout: bool = False
+    split_mode: Literal["scene", "none"] = "scene"
     load_hand_poses: bool = True
     require_both_hands: bool = False
     video_backend: VideoBackend = "torchcodec"
@@ -57,6 +65,18 @@ class DextrisDatasetCfg(DatasetCfg):
     ):
         view_sampler = self.build_view_sampler(stage)
         return DatasetDextris(self, stage, view_sampler, step_fn=step_fn, horizon_fn=horizon_fn)
+
+
+@dataclass(kw_only=True)
+class RobotDextrisDatasetCfg(DextrisDatasetCfg):
+    root: str = "/mnt/fast/mzhobro/trailer-demo"
+    tasks: list[str] = field(default_factory=list)
+    flat_layout: bool = True
+    split_mode: Literal["scene", "none"] = "none"
+    load_hand_poses: bool = False
+    video_backend: VideoBackend = "opencv"
+    workspace_min: list[float] | None = None
+    workspace_max: list[float] | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -151,11 +171,22 @@ def parse_hand_tracking(ht_path: str | Path) -> dict:
     }
 
 
-def discover_samples(root: str | Path, tasks: list[str] | None = None) -> list[Path]:
-    """Sorted sample directories that have calibration, hand tracking and all 8 videos."""
+def discover_samples(
+    root: str | Path,
+    tasks: list[str] | None = None,
+    *,
+    flat_layout: bool = False,
+    require_hand_tracking: bool = True,
+) -> list[Path]:
+    """Sample directories with calibration, all 8 videos and optional hand tracking."""
     root = Path(root)
     out: list[Path] = []
-    task_dirs = [root / t for t in tasks] if tasks else [d for d in root.iterdir() if d.is_dir()]
+    if flat_layout:
+        task_dirs = [root]
+    else:
+        task_dirs = (
+            [root / t for t in tasks] if tasks else sorted(d for d in root.iterdir() if d.is_dir())
+        )
     for td in task_dirs:
         if not td.is_dir():
             continue
@@ -163,8 +194,10 @@ def discover_samples(root: str | Path, tasks: list[str] | None = None) -> list[P
             if not sample.is_dir():
                 continue
             sid = sample.name
+            if flat_layout and tasks and sid.rsplit("_", 1)[0] not in tasks:
+                continue
             calib_ok = (sample / "calibration_result.json").exists()
-            ht_ok = (sample / f"{sid}_hand_tracking.json").exists()
+            ht_ok = not require_hand_tracking or (sample / f"{sid}_hand_tracking.json").exists()
             videos_ok = all((sample / f"{sid}_{cam}.mp4").exists() for cam in CAMERA_NAMES)
             if calib_ok and ht_ok and videos_ok:
                 out.append(sample)
@@ -174,6 +207,72 @@ def discover_samples(root: str | Path, tasks: list[str] | None = None) -> list[P
 # --------------------------------------------------------------------------- #
 # Dataset
 # --------------------------------------------------------------------------- #
+
+
+def write_metadata(cfg: DextrisDatasetCfg, path: str | Path) -> list[dict]:
+    """Index complete recordings using ffprobe headers, without decoding videos.
+
+    The resulting dextris_info.csv is reused by the existing loader. Rebuild it
+    explicitly after adding or replacing recordings. Unreadable/incomplete scenes
+    are reported and excluded; the original index survives a failed rebuild.
+    """
+    root = Path(cfg.root)
+    rows = []
+    samples = discover_samples(
+        root, cfg.tasks, flat_layout=cfg.flat_layout, require_hand_tracking=cfg.load_hand_poses
+    )
+    for sample in samples:
+        try:
+            counts = []
+            for cam in CAMERA_NAMES:
+                video = sample / f"{sample.name}_{cam}.mp4"
+                result = subprocess.run(
+                    [
+                        "ffprobe",
+                        "-v",
+                        "error",
+                        "-select_streams",
+                        "v:0",
+                        "-show_entries",
+                        "stream=nb_frames",
+                        "-of",
+                        "json",
+                        str(video),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=30,
+                )
+                counts.append(int(json.loads(result.stdout)["streams"][0]["nb_frames"]))
+            if len(set(counts)) != 1 or counts[0] <= 0:
+                raise ValueError(f"camera frame counts disagree or are empty: {counts}")
+        except (subprocess.SubprocessError, ValueError, KeyError, IndexError) as exc:
+            print(f"Skipping {sample.name}: {exc}", flush=True)
+            continue
+        rows.append(
+            {
+                "task": sample.name.rsplit("_", 1)[0] if cfg.flat_layout else sample.parent.name,
+                "sample_id": sample.name,
+                "rel_dir": str(sample.relative_to(root)),
+                "n_frames": counts[0],
+            }
+        )
+        print(f"Indexed {sample.name}: {counts[0]} frames, {len(counts)} cameras", flush=True)
+    if not rows:
+        raise ValueError(f"No complete recordings found in {root}; index was not written")
+    path = Path(path)
+    with tempfile.NamedTemporaryFile(mode="w", newline="", dir=path.parent, delete=False) as f:
+        temporary = Path(f.name)
+        try:
+            writer = csv.DictWriter(f, fieldnames=["task", "sample_id", "rel_dir", "n_frames"])
+            writer.writeheader()
+            writer.writerows(rows)
+            f.flush()
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return rows
 
 
 class DatasetDextris(TemporalSceneDataset):
@@ -191,8 +290,9 @@ class DatasetDextris(TemporalSceneDataset):
         horizon_fn: HorizonFn | None = None,
     ) -> None:
         if not has_video_backend(cfg.video_backend):
+            extra = "video" if cfg.video_backend == "torchcodec" else cfg.video_backend
             raise ImportError(
-                f"DEXTRIS needs the {cfg.video_backend!r} video backend; install ontic-data[video]"
+                f"DEXTRIS needs the {cfg.video_backend!r} video backend; install ontic-data[{extra}]"
             )
         self.root = Path(cfg.root).resolve()
         super().__init__(cfg, stage, view_sampler, step_fn=step_fn, horizon_fn=horizon_fn)
@@ -211,12 +311,17 @@ class DatasetDextris(TemporalSceneDataset):
             if cfg.tasks:
                 meta = meta[meta["task"].isin(cfg.tasks)].reset_index(drop=True)
             return meta.to_dict("records")
-        sample_dirs = discover_samples(self.root, cfg.tasks)
+        sample_dirs = discover_samples(
+            self.root,
+            cfg.tasks,
+            flat_layout=cfg.flat_layout,
+            require_hand_tracking=cfg.load_hand_poses,
+        )
         if not sample_dirs:
             raise FileNotFoundError(f"no DEXTRIS samples in {self.root} for tasks={cfg.tasks}")
         return [
             {
-                "task": sd.parent.name,
+                "task": sd.name.rsplit("_", 1)[0] if cfg.flat_layout else sd.parent.name,
                 "sample_id": sd.name,
                 "rel_dir": str(sd.relative_to(self.root)),
             }
@@ -232,9 +337,11 @@ class DatasetDextris(TemporalSceneDataset):
     def _scene_name(self, rec: dict, t_start: int) -> str:
         sp = self.cfg.speedup
         end = t_start + self.n_full_steps * sp
-        return f"{rec['task']}/{rec['sample_id']}_{t_start}:{end}:{sp}"
+        return f"{self._record_label(rec)}_{t_start}:{end}:{sp}"
 
     def _record_label(self, rec: dict) -> str:
+        if self.cfg.flat_layout:
+            return rec["sample_id"]
         return f"{rec['task']}/{rec['sample_id']}"
 
     def _open_scene(self, rec: dict) -> DextrisSceneView:

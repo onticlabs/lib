@@ -37,6 +37,29 @@ dataset. Roots default to the dev-box paths in `data_source.DEFAULT_ROOTS`
 (`/mnt/fast/...`); override them on other machines, e.g.
 `--genesis-root /fast/mzhobro/datasets/soft_genesis_elastic`.
 
+**robot-dextris** opens `/mnt/fast/mzhobro/trailer-demo` using the DEXTRIS loader:
+eight calibrated RGB cameras at 60 FPS, with recordings directly under the root.
+Select it in **Dataset** and press **Load dataset**; override the path with
+`--robot-dextris-root /path/to/recordings`. It lists all recordings without a
+train/validation split and has no GT depth, hand labels or default workspace crop.
+Each recording needs `calibration_result.json` and `<recording>_P00.mp4` through
+`<recording>_P07.mp4`; empty or missing-file directories are ignored.
+
+Build its recording index once (requires `ffprobe` on PATH):
+
+```bash
+uv run --no-sync python scripts/index_dextris.py \
+  --dataset robot-dextris --root /mnt/fast/mzhobro/trailer-demo
+```
+
+This writes `dextris_info.csv`, the same metadata format used by DEXTRIS. Startup
+then reads frame counts from the CSV. Use `--refresh` after adding or replacing
+recordings; incomplete videos or differing camera frame counts are reported and
+excluded. The same command supports `--dataset dextris` for nested hand captures.
+Robot recordings use `ontic-data[opencv,tables]`: OpenCV's FFmpeg decoder opens the
+container index without scanning every frame. The viewer retains only the current
+trajectory's readers per data source and reuses them while scrubbing or tracking.
+
 Presets (named `ViewConfig`s: stride / drop-conf% / voxel / SFC / FPS / point size /
 colour / alignment mode / workspace box) live in
 `~/.config/ontic/backbone_viewer_presets.json` (override with `--presets` or

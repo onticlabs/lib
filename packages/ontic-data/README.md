@@ -2,9 +2,9 @@
 
 Dataset loaders for temporal multi-view scenes, built on `ontic-lib`: one
 example schema (`ontic_data.example.BatchedTempExample`), a shared
-`TemporalSceneDataset` skeleton, view sampling and collation, and six
+`TemporalSceneDataset` skeleton, view sampling and collation, and seven
 registered datasets (`ontic_data.DATASETS`: `genesis`, `hocap`, `taco`,
-`dextris`, `physinone`, `synthrobot`) plus a `MixedDatasetCfg`. Every module
+`dextris`, `robot-dextris`, `physinone`, `synthrobot`) plus a `MixedDatasetCfg`. Every module
 imports with `torch` + `numpy` + `einops` + `pyyaml`; format readers are lazy,
 explicit extras.
 
@@ -38,7 +38,7 @@ dependency group.
 | `ontic-data[video]` | `torchcodec` | `VideoReader(backend="torchcodec")`: taco, dextris, synthrobot |
 | `ontic-data[decord]` | `decord` (Python < 3.12) | `VideoReader(backend="decord")` |
 | `ontic-data[hdf5]` | `h5py` | synthrobot trajectory stores |
-| `ontic-data[opencv]` | `opencv-python-headless` | hand overlays, hocap frame decoding |
+| `ontic-data[opencv]` | `opencv-python-headless` | hand overlays, hocap frames, robot-dextris video decoding |
 | `ontic-data[hocap]` | `hdf5` + `opencv` + `scipy` | the HO-Cap loader |
 | `ontic-data[tables]` | `pandas` | dataset meta CSVs |
 | `ontic-data[images]` | `pillow` | genesis, physinone frames |

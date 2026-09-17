@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
+import weakref
 
 import pytest
 import torch
@@ -76,7 +78,15 @@ def test_dataset_names_and_hints():
     assert dataset_names({"x": _FakeCfg, "y": _FakeCfg}) == ["x", "y"]
     assert dataset_has_gt_depth("hocap") and not dataset_has_gt_depth("taco")
     assert dataset_has_gt_depth("unknown") is False
-    assert set(DEFAULT_ROOTS) == {"dextris", "hocap", "taco", "genesis", "physinone", "synthrobot"}
+    assert set(DEFAULT_ROOTS) == {
+        "dextris",
+        "robot-dextris",
+        "hocap",
+        "taco",
+        "genesis",
+        "physinone",
+        "synthrobot",
+    }
 
 
 def test_build_source_from_fake_registry(tmp_path):
@@ -93,6 +103,28 @@ def test_build_source_from_fake_registry(tmp_path):
     assert src.ds.calls[-1] == (1, 2, False, True)
     with pytest.raises(ValueError):
         build_source("nope", registry=registry)
+
+
+def test_robot_dextris_viewer_registration_and_root_override(tmp_path, monkeypatch):
+    from ontic_data import DATASETS
+    from ontic_viz.backbone_viewer.cli import build_parser
+    from ontic_viz.backbone_viewer.config import dataset_defaults
+
+    names = dataset_names()
+    assert "robot-dextris" in names
+    args = build_parser(names).parse_args(["--robot-dextris-root", str(tmp_path)])
+    seen = []
+
+    def build(cfg, stage):
+        seen.append((cfg.root, cfg.flat_layout, cfg.load_hand_poses, stage))
+        return _FakeTemporalDataset(["demo_001"])
+
+    monkeypatch.setattr(DATASETS["robot-dextris"], "build", build)
+    src = build_source("robot-dextris", root=args.robot_dextris_root)
+    assert src.name == "robot-dextris" and src.list_trajectories() == ["demo_001"]
+    assert seen == [(str(tmp_path), True, False, "val")]
+    assert not dataset_has_gt_depth("robot-dextris")
+    assert not dataset_defaults()["robot-dextris"].crop_enabled
 
 
 def test_genesis_root_maps_to_roots_list():
@@ -122,3 +154,43 @@ def test_present_hands_filters_absent_and_collapsed():
     assert hands.shape == (1, 21, 3)
     assert present_hands_from_action({"right_hand": collapsed}) is None
     assert present_hands_from_action({}) is None
+
+
+def test_source_reuses_readers_and_releases_previous_trajectory():
+    from ontic_data.temporal import SceneView, TemporalSceneDataset
+
+    opened = []
+
+    class View(SceneView):
+        def __init__(self, rec):
+            self.rec = rec
+            self.cam_names = ["P00"]
+            self.intrinsics = torch.eye(3)[None]
+
+        def extrinsics(self, frame_idx):
+            return torch.eye(4)[None]
+
+        def load_views(self, cam_ixs, frame_idx, out_hw, **kwargs):
+            return {"image": torch.full((1, 3, 2, 2), (self.rec * 10 + frame_idx) / 100)}
+
+    class Dataset(TemporalSceneDataset):
+        def __init__(self):
+            self.records = [0, 1]
+            self.cfg = SimpleNamespace(image_shape=[2, 2])
+
+        def _record_label(self, rec):
+            return str(rec)
+
+        def _open_scene(self, rec):
+            view = View(rec)
+            opened.append(weakref.ref(view))
+            return view
+
+    source = GenericSource("test", Dataset())
+    first = source.get_frame(0, 1)
+    second = source.get_frame(0, 2)
+    assert len(opened) == 1 and opened[0]() is not None
+    assert not torch.equal(first.images, second.images)
+    third = source.get_frame(1, 1)
+    assert len(opened) == 2 and opened[0]() is None
+    assert torch.allclose(third.images, torch.full_like(third.images, 0.11))

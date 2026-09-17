@@ -1,12 +1,12 @@
 """Random-access video frame reading.
 
-One reader API over two explicit backends: ``"torchcodec"`` (default) and ``"decord"``.
-Both decode through ffmpeg and are bit-exact on the dataset streams. The backend is
-never picked from what happens to be installed: pass it, and check availability with
+One reader API over ``"torchcodec"`` (default), ``"decord"`` and ``"opencv"``.
+OpenCV uses FFmpeg's container index without TorchCodec's full-file startup scan.
+The backend is never picked from what happens to be installed: pass it, and check availability with
 :func:`has_video_backend`.
 
-Readers are meant to be owned per sample (opened on demand, released with the sample);
-never cache them process-wide — decoded-frame buffers grow without bound.
+Training readers are owned per sample. The viewer keeps readers for only its
+current trajectory per source; avoid unbounded caches of open recordings.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import Literal
 
 import torch
 
-VideoBackend = Literal["torchcodec", "decord"]
+VideoBackend = Literal["torchcodec", "decord", "opencv"]
 DEFAULT_BACKEND: VideoBackend = "torchcodec"
 
 
@@ -38,7 +38,15 @@ def _import_backend(backend: str):
                 "video backend 'decord' requires decord; install ontic-data[decord]"
             ) from e
         return decord
-    raise ValueError(f"unknown video backend {backend!r} (expected 'torchcodec' or 'decord')")
+    if backend == "opencv":
+        try:
+            import cv2
+        except ImportError as e:
+            raise ImportError(
+                "video backend 'opencv' requires OpenCV; install ontic-data[opencv]"
+            ) from e
+        return cv2
+    raise ValueError(f"unknown video backend {backend!r} (expected torchcodec, decord or opencv)")
 
 
 def has_video_backend(backend: str = DEFAULT_BACKEND) -> bool:
@@ -60,6 +68,15 @@ class VideoReader:
     def __init__(self, path: str | Path, backend: VideoBackend = DEFAULT_BACKEND):
         mod = _import_backend(backend)
         self._backend = backend
+        self._path = str(path)
+        if backend == "opencv":
+            self._dec = mod.VideoCapture(self._path, mod.CAP_FFMPEG)
+            if not self._dec.isOpened():
+                raise RuntimeError(f"Cannot open video: {path}")
+            self._n = int(self._dec.get(mod.CAP_PROP_FRAME_COUNT))
+            if self._n <= 0:
+                raise RuntimeError(f"Video has no frame-count metadata: {path}")
+            return
         if backend == "torchcodec":
             decoder_cls = getattr(mod, "VideoDecoder", None) or mod.SimpleVideoDecoder
             self._dec = decoder_cls(str(path))
@@ -74,6 +91,21 @@ class VideoReader:
 
     def get_frames(self, indices: list[int]) -> torch.Tensor:
         ix = [int(i) for i in indices]
+        if self._backend == "opencv":
+            import cv2
+
+            frames = []
+            for i in ix:
+                if not 0 <= i < self._n:
+                    raise IndexError(f"Frame {i} is outside [0, {self._n}) in {self._path}")
+                if int(self._dec.get(cv2.CAP_PROP_POS_FRAMES)) != i:
+                    if not self._dec.set(cv2.CAP_PROP_POS_FRAMES, i):
+                        raise RuntimeError(f"Cannot seek to frame {i} in {self._path}")
+                ok, frame = self._dec.read()
+                if not ok:
+                    raise RuntimeError(f"Cannot decode frame {i} in {self._path}")
+                frames.append(torch.from_numpy(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
+            return torch.stack(frames)
         if self._backend == "decord":
             batch = self._dec.get_batch(ix)
             # decord's torch bridge is thread-local, so the batch may be a torch tensor or

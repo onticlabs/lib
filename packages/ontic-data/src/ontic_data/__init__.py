@@ -7,7 +7,7 @@ classes; ``cfg.build(stage, step_fn=..., horizon_fn=...)`` returns the dataset.
 """
 
 from .config import DatasetCfg, HorizonFn, StepFn
-from .datasets.dextris import DextrisDatasetCfg
+from .datasets.dextris import DextrisDatasetCfg, RobotDextrisDatasetCfg
 from .datasets.genesis import DatasetGenesisCfg
 from .datasets.hocap import HocapDatasetCfg
 from .datasets.physinone import PhysInOneDatasetCfg
@@ -21,6 +21,7 @@ DATASETS: dict[str, type[DatasetCfg]] = {
     "hocap": HocapDatasetCfg,
     "taco": TacoDatasetCfg,
     "dextris": DextrisDatasetCfg,
+    "robot-dextris": RobotDextrisDatasetCfg,
     "physinone": PhysInOneDatasetCfg,
     "synthrobot": SynthRobotDatasetCfg,
 }

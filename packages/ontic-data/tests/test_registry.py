@@ -30,7 +30,15 @@ HEAVY = [
 
 
 def test_registry_keys_and_base():
-    assert list(DATASETS) == ["genesis", "hocap", "taco", "dextris", "physinone", "synthrobot"]
+    assert list(DATASETS) == [
+        "genesis",
+        "hocap",
+        "taco",
+        "dextris",
+        "robot-dextris",
+        "physinone",
+        "synthrobot",
+    ]
     for cls in DATASETS.values():
         assert issubclass(cls, DatasetCfg)
         cfg = cls()
