@@ -1,8 +1,15 @@
 """Tests for ontic_lib.splats.sh (e3nn-backed)."""
 
+import importlib.util
+
+import pytest
 import torch
 
 from ontic_lib.splats import sh as SH
+
+needs_e3nn = pytest.mark.skipif(
+    importlib.util.find_spec("e3nn") is None, reason="e3nn not installed"
+)
 
 
 def _random_rotations(n, seed=0, dtype=torch.float64):
@@ -29,6 +36,7 @@ def test_safe_acos_matches_acos_in_interior_and_is_finite_at_endpoints():
     assert bool(torch.isfinite(out).all())
 
 
+@needs_e3nn
 def test_direction_to_angles_reconstructs_direction():
     from e3nn.o3 import angles_to_matrix
 
@@ -36,12 +44,13 @@ def test_direction_to_angles_reconstructs_direction():
     direction = torch.randn(8, 3, generator=g, dtype=torch.float64)
     unit = torch.nn.functional.normalize(direction, p=2, dim=-1)
     alpha, beta = SH.direction_to_angles(unit)
-    rebuilt = angles_to_matrix(
-        alpha, beta, torch.zeros_like(alpha)
-    ) @ unit.new_tensor([0.0, 1.0, 0.0])
+    rebuilt = angles_to_matrix(alpha, beta, torch.zeros_like(alpha)) @ unit.new_tensor(
+        [0.0, 1.0, 0.0]
+    )
     torch.testing.assert_close(rebuilt, unit, atol=1e-6, rtol=0)
 
 
+@needs_e3nn
 def test_band0_is_rotation_invariant():
     g = torch.Generator().manual_seed(2)
     coeffs = torch.randn(5, 1, generator=g, dtype=torch.float64)
@@ -50,6 +59,7 @@ def test_band0_is_rotation_invariant():
     torch.testing.assert_close(out, coeffs, atol=1e-6, rtol=0)
 
 
+@needs_e3nn
 def test_identity_rotation_is_noop():
     g = torch.Generator().manual_seed(4)
     coeffs = torch.randn(3, 9, generator=g, dtype=torch.float64)  # bands l=0,1,2
@@ -58,6 +68,7 @@ def test_identity_rotation_is_noop():
     torch.testing.assert_close(out, coeffs, atol=1e-6, rtol=0)
 
 
+@needs_e3nn
 def test_rotation_preserves_shape_and_norm():
     g = torch.Generator().manual_seed(5)
     coeffs = torch.randn(4, 4, generator=g, dtype=torch.float64)  # bands l=0,1
@@ -71,6 +82,7 @@ def test_rotation_preserves_shape_and_norm():
     )
 
 
+@needs_e3nn
 def test_incomplete_bands_raise():
     coeffs = torch.randn(3, dtype=torch.float64)  # 3 is not a perfect square
     rot = _random_rotations(1, seed=7)[0]
@@ -82,6 +94,7 @@ def test_incomplete_bands_raise():
         raise AssertionError("expected ValueError")
 
 
+@needs_e3nn
 def test_batched_rotations():
     g = torch.Generator().manual_seed(8)
     coeffs = torch.randn(2, 6, 4, generator=g, dtype=torch.float64)
