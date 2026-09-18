@@ -7,14 +7,20 @@ import tempfile
 import threading
 from pathlib import Path
 
+from ontic_nn.video_depth import VIDEO_DEPTH_MODELS
 
 from .errors import log_error, status_error
 from .query_regions import QueryRegions
+from .runner import AlignMode
+from .video_depth import VIDEO_MODEL_LABELS, VIDEO_SOURCES, VideoDepthSettings
 from .tracking import (
     GEOMETRY_SOURCES,
+    PREVIEW_ALIGNMENT,
     SENSOR,
+    SENSOR_SCALE,
     TRACKER_LABELS,
     ClipSpec,
+    EmptyQueryRegion,
     PreparedClip,
     TrackingRun,
     TrackerSettings,
@@ -29,7 +35,7 @@ from .tracking import (
 
 
 class TrackingPanel:
-    def __init__(self, app, tab, playback_folder):
+    def __init__(self, app, tab, playback_tab):
         self.app = app
         self.runner = TrackingRunner(app.device)
         self.result = None
@@ -50,6 +56,9 @@ class TrackingPanel:
         self._model_files = {}
         self._model_files_lock = threading.RLock()
         self._model_files_owner = "mvtracker"
+        self._video_settings = {}
+        self._video_settings_lock = threading.RLock()
+        self._video_settings_owner = "vda_small"
         g = app.server.gui
         with app.dataset_tab:
             with g.add_folder("Clip", order=1):
@@ -58,16 +67,43 @@ class TrackingPanel:
                 self.stride = g.add_number("Frame step", 1, min=1, step=1)
                 self.use_frame = g.add_button("Start at current frame")
         with app.depth_tab:
-            with g.add_folder("Depth for tracking", order=2):
+            with g.add_folder("Video depth", order=0):
                 self.geometry = g.add_dropdown(
                     "Depth source", GEOMETRY_SOURCES, initial_value=SENSOR
                 )
-                self.resolution = g.add_slider("Clip long side", 128, 1024, 16, 512)
-                g.add_markdown(
-                    "Uses the clip and cameras from **1. Dataset**. Choose recorded depth "
-                    "or the selected backbone with scale calibration. Preview it here, then open **3. Tracking**."
+                self.video_model = g.add_dropdown(
+                    "Video model", list(VIDEO_MODEL_LABELS), visible=False
                 )
-                self.prepare_button = g.add_button("Preview depth clip", color="blue")
+                self.video_repo = g.add_text("Video research checkout", "", visible=False)
+                self.video_checkpoint = g.add_text("Video checkpoint", "", visible=False)
+                self.video_download = g.add_checkbox("Download video weights", False, visible=False)
+                self.video_input_size = g.add_slider(
+                    "Video inference size",
+                    140,
+                    756,
+                    14,
+                    VIDEO_DEPTH_MODELS[self._video_settings_owner]().input_size,
+                    visible=False,
+                )
+                self.video_resolution_level = g.add_slider(
+                    "VeloDepth resolution level", 0, 9, 1, 0, visible=False
+                )
+                self.video_fp32 = g.add_checkbox("Video full precision", False, visible=False)
+                self.video_default_size = g.add_button(
+                    "Use video model default size", visible=False
+                )
+                self.resolution = g.add_slider("Playback long side (px)", 128, 1024, 16, 512)
+                g.add_markdown(
+                    "Playback size limits the cached images and point clouds. "
+                    "Model input sizes are chosen separately for each model."
+                )
+                self.geometry_hint = g.add_markdown("")
+                g.add_markdown(
+                    "Uses the clip and cameras from **1. Dataset**. "
+                    "Run depth over the selected frames without tracks. You can also go straight to "
+                    "**3. Tracking → Run tracking**; it prepares or reuses this depth for you."
+                )
+                self.prepare_button = g.add_button("Run video depth", color="blue")
         with tab:
             g.add_markdown(
                 "Choose a tracker and the points to follow. **Queries start on the first clip frame.**",
@@ -86,7 +122,8 @@ class TrackingPanel:
                 self.sampling = g.add_dropdown("Sampling", ["Even coverage", "Farthest points"])
                 g.add_markdown(
                     "Seeds use the **shown depth points** on the first clip frame, including "
-                    "**Display** workspace, confidence and point-count filters. Colors stay attached to point IDs."
+                    "**Depth** point-cloud filters and the **Display** workspace crop. "
+                    "Colors stay attached to point IDs."
                 )
             self.regions = QueryRegions(app)
             self.run_button = g.add_button("Run tracking", color="blue")
@@ -102,12 +139,21 @@ class TrackingPanel:
         self.cancel_button = g.add_button(
             "Cancel after current operation", disabled=True, visible=False, order=0.6
         )
-        with playback_folder:
-            self.history_picker = g.add_dropdown("Cached result", ["(no results)"], disabled=True)
-            self.play = g.add_button("Play", disabled=True)
-            self.fps = g.add_slider("Playback FPS", 1, 30, 1, 8)
-            self.loop = g.add_checkbox("Loop clip", True)
-            self.timeline = g.add_markdown("No cached tracks yet.")
+        with playback_tab:
+            self.playback_hint = g.add_markdown("")
+            self.history_picker = g.add_dropdown(
+                "Result to play", ["(no results)"], disabled=True, visible=False
+            )
+            self.clip_frame = g.add_slider("Clip frame", 1, 2, 1, 1, disabled=True)
+            self.timeline = g.add_markdown("")
+            self.play = g.add_button("Play clip", disabled=True)
+            self.restart = g.add_button("Restart clip", disabled=True)
+            with g.add_folder("Playback settings", expand_by_default=False):
+                self.fps = g.add_slider("Speed (frames/sec)", 1, 30, 1, 8)
+                self.loop = g.add_checkbox("Loop clip", True)
+        with tab:
+            self.export_folder = g.add_folder("Export", expand_by_default=False)
+        with self.export_folder:
             self.download_button = g.add_button("Download tracks (.npz)", disabled=True)
             self.rerun_button = g.add_button(
                 "Download Rerun (.rrd)",
@@ -122,6 +168,14 @@ class TrackingPanel:
             self.stride,
             self.use_frame,
             self.geometry,
+            self.video_model,
+            self.video_repo,
+            self.video_checkpoint,
+            self.video_download,
+            self.video_input_size,
+            self.video_resolution_level,
+            self.video_default_size,
+            self.video_fp32,
             self.resolution,
             self.view,
             self.count,
@@ -133,25 +187,37 @@ class TrackingPanel:
         ] + self.regions.inputs
         self.dd_tracker.on_update(lambda _: self._on_tracker_change())
         self.geometry.on_update(lambda _: self.update_depth_summary())
+        app.dd_align.on_update(lambda _: self.update_depth_summary())
+        app.dd_metric.on_update(lambda _: self.update_depth_summary())
+        self.video_model.on_update(lambda _: self._on_video_model_change())
+        self.video_default_size.on_click(lambda _: self._reset_video_resolution())
         self.use_frame.on_click(lambda _: setattr(self.start, "value", int(app.sl_time.value)))
         self.run_button.on_click(lambda _: self.start_job())
         self.prepare_button.on_click(lambda _: self.start_job(track=False))
         self.history_picker.on_update(lambda _: self._select_history())
         self.cancel_button.on_click(lambda _: self.request_cancel())
         self.play.on_click(lambda _: self.toggle_playback())
+        self.restart.on_click(lambda _: self.seek_clip(0))
+        self.clip_frame.on_update(self._scrub_clip)
         self.download_button.on_click(self.download_result)
         self.update_model_hint()
         self.update_depth_summary()
+        self._update_playback_controls()
 
-    def build_display(self):
+    def build_appearance(self):
         g = self.app.server.gui
-        with g.add_folder("Track appearance", order=-1):
+        with self.app.depth_appearance_folder:
+            self.background = g.add_checkbox("Show depth cloud", True, order=-1)
+        with (
+            self.app.track_tab,
+            g.add_folder("Track appearance", expand_by_default=False) as appearance,
+        ):
             self.show = g.add_checkbox("Show tracks", True)
-            self.background = g.add_checkbox("Show depth cloud", True)
             self.trails = g.add_slider("Trail frames", 0, 60, 1, 10)
-            self.point_size = g.add_slider("Track point size", 0.005, 0.06, 0.001, 0.018)
+            self.point_size = g.add_slider("Track point size", 0.0, 0.06, 0.001, 0.018)
             self.occluded = g.add_checkbox("Show occluded tracks (dim)", True)
             self.visibility = g.add_slider("Visibility threshold", 0.0, 1.0, 0.05, 0.5)
+        self.export_folder.order = appearance.order + 1
         for handle in [self.show, self.trails, self.point_size, self.occluded, self.visibility]:
             handle.on_update(lambda _: self.app._guarded(self.render))
         self.background.on_update(lambda _: self.app._cheap_update())
@@ -165,6 +231,7 @@ class TrackingPanel:
             "demo": "**Analytic demo** · known synthetic motion, no neural inference. Select the demo scene.",
             "mvtracker": "**Multi-view RGB-D** · jointly tracks enabled cameras. At least 7 frames; world-space trajectories.",
             "tapip3d": "**Single-view RGB-D** · choose one enabled tracker camera. Geometry can still use multiple views.",
+            "cotracker3": "**2D tracks + depth** · tracks each enabled camera independently, then lifts with the selected depth and cameras. Occluded points have no valid 3D position; views are not fused.",
             "trackcraft3r": "**Single-view RGB** · exactly 12 frames; native 480 × 832 grid. Depth anchors tracks into the calibrated world frame.",
         }
         self.model_hint.content = hints[name] + f" Device: **{self.app.device}**."
@@ -205,15 +272,132 @@ class TrackingPanel:
             if self._model_files_owner in settings:
                 self._show_model_files(self._model_files_owner)
 
+    def _on_video_model_change(self):
+        """Keep checkpoint paths and inference controls specific to each model."""
+        with self._video_settings_lock:
+            name = VIDEO_MODEL_LABELS[self.video_model.value]
+            controls = {
+                "repo_path": self.video_repo,
+                "checkpoint_path": self.video_checkpoint,
+                "allow_download": self.video_download,
+                "input_size": self.video_input_size,
+                "resolution_level": self.video_resolution_level,
+                "fp32": self.video_fp32,
+            }
+            if name != self._video_settings_owner:
+                self._video_settings[self._video_settings_owner] = {
+                    key: control.value for key, control in controls.items()
+                }
+                self._video_settings_owner = name
+                defaults = {
+                    "repo_path": "",
+                    "checkpoint_path": "",
+                    "allow_download": False,
+                    **self.video_resolution_defaults(),
+                    "fp32": False,
+                }
+                settings = self._video_settings.get(name, defaults)
+                for key, control in controls.items():
+                    control.value = settings[key]
+            self.update_depth_summary()
+
+    def video_resolution_defaults(self):
+        cfg = VIDEO_DEPTH_MODELS[VIDEO_MODEL_LABELS[self.video_model.value]]()
+        return {
+            "input_size": getattr(cfg, "input_size", int(self.video_input_size.min)),
+            "resolution_level": getattr(cfg, "resolution_level", 0),
+        }
+
+    def _reset_video_resolution(self):
+        defaults = self.video_resolution_defaults()
+        self.video_input_size.value = defaults["input_size"]
+        self.video_resolution_level.value = defaults["resolution_level"]
+
     def update_depth_summary(self):
+        video = self.geometry.value in VIDEO_SOURCES
+        for control in (
+            self.video_model,
+            self.video_repo,
+            self.video_checkpoint,
+            self.video_download,
+            self.video_input_size,
+            self.video_fp32,
+            self.video_default_size,
+        ):
+            control.visible = video
+        name = VIDEO_MODEL_LABELS[self.video_model.value]
+        self.video_input_size.visible = video and name != "velodepth"
+        self.video_resolution_level.visible = video and name == "velodepth"
+        self.video_input_size.label = "DA3 long side" if name == "da3_nested" else "VDA short side"
+        self.video_checkpoint.label = (
+            "Video checkpoint snapshot"
+            if name in ("velodepth", "da3_nested")
+            else "Video checkpoint (.pth)"
+        )
         source = (
             "recorded sensor / GT depth"
             if self.geometry.value == SENSOR
+            else f"{self.video_model.value} · {self.geometry.value}"
+            if video
             else f"{self.app.dd_backbone.value} · {self.geometry.value}"
         )
+        if self.geometry.value == PREVIEW_ALIGNMENT:
+            source += f" · {self.app.dd_align.value}"
+        if not self.app._busy:
+            for control in (self.app.dd_align, self.app.dd_metric):
+                control.disabled = (
+                    self.active_clip is not None and self.geometry.value != PREVIEW_ALIGNMENT
+                )
         self.depth_summary.content = (
-            f"**Depth input:** {source}. Configure it in **2. Depth model**."
+            f"**Depth:** {source} (from **2. Depth**). "
+            "Run tracking prepares any missing depth for the selected frames automatically."
         )
+        if video:
+            hint = (
+                "**Video depth:** processes each camera's full clip with temporal context. "
+                "Metric mode works without recorded depth. Clip sensor scale uses one scale "
+                "per camera for the entire clip. Smaller inference sizes reduce memory use."
+            )
+            if name == "velodepth":
+                hint += (
+                    " VeloDepth propagates geometry between keyframes; resolution level 0 "
+                    "uses the smallest native pixel budget. Supply an HF snapshot directory "
+                    "for local weights."
+                )
+            elif name == "da3_nested":
+                hint += (
+                    " DA3 Nested processes all selected frames jointly. It is a large model; "
+                    "start with short clips. Supply an HF snapshot directory for local weights."
+                )
+        elif self.geometry.value == PREVIEW_ALIGNMENT:
+            hint = (
+                f"**Preview alignment:** runs **{self.app.dd_backbone.value}** on each frame "
+                f"using **{self.app.dd_align.value}**, as selected under **Alignment**. "
+                "sim3_points keeps the predicted cameras and intrinsics after alignment to "
+                "the dataset world. prescale_gt uses calibrated dataset cameras. "
+                "metric_mono uses the selected metric depth model to determine scale. "
+                "A matching single-frame result is reused."
+            )
+        elif self.geometry.value == SENSOR:
+            hint = (
+                "**Recorded depth:** uses the dataset's sensor / GT depth directly. "
+                "The selected model is only used for a single-frame preview."
+            )
+        else:
+            calibration = (
+                "Uses recorded depth to set the scale in meters. Requires a dataset with depth."
+                if self.geometry.value == SENSOR_SCALE
+                else "Uses the known distances between cameras to set the scale in meters. "
+                "Requires a model that predicts camera poses and at least two cameras "
+                "at different positions; recorded depth is not needed."
+            )
+            hint = (
+                f"**Predicted depth:** runs **{self.app.dd_backbone.value}** on each clip frame. "
+                + calibration
+                + " Uses calibrated dataset cameras; this can differ from a sim3_points "
+                "preview. Select preview alignment to keep that preview's camera geometry."
+            )
+        self.geometry_hint.content = hint
 
     def set_context(self, source, traj):
         key = (id(source), traj)
@@ -249,18 +433,36 @@ class TrackingPanel:
             self._query_mask_cache = None
             self._sample_mask_cache = None
             self.runner.cached_clip = None
+            self.runner.backbone_frame = None
             self.history.clear()
             self._history_updating = True
             self.history_picker.options = ["(no results)"]
             self.history_picker.value = "(no results)"
             self.history_picker.disabled = True
             self._history_updating = False
-        self.play.disabled = self.download_button.disabled = self.rerun_button.disabled = True
-        self.app.dd_align.disabled = False
-        self.app.dd_metric.disabled = False
-        self.timeline.content = "No cached tracks yet."
+        elif self.history:
+            self._history_updating = True
+            self.history_picker.options = ["(choose a result)", *self.history]
+            self.history_picker.value = "(choose a result)"
+            self._history_updating = False
+        self._update_playback_controls()
 
-    def start_job(self, *, background=True, track=True):
+    def show_query_frame(self, *, on_ready=None, background=True):
+        """Prepare the selected geometry and show precisely the frame used to seed tracks."""
+        self.start_job(background=background, track=False, query_reference=True, on_ready=on_ready)
+
+    def _show_query_reference(self, clip):
+        self.app._suspend = True
+        self.app.sl_time.value = clip.indices[0]
+        self.app._suspend = False
+        # Keep the previous completed run in history, while showing the actual
+        # query geometry without trajectories from another model or frame.
+        if self.preview is clip:
+            self.show_frame(clip.indices[0])
+        else:
+            self.add_result(clip)
+
+    def start_job(self, *, background=True, track=True, query_reference=False, on_ready=None):
         app = self.app
         if not app._operation_lock.acquire(blocking=False):
             return
@@ -302,6 +504,25 @@ class TrackingPanel:
                 app.dd_backbone.value,
                 app.cb_condition.value,
             )
+            backbone_long_side = int(app.sl_lside.value) or None
+            backbone_alignment = app.dd_align.value
+            metric_model = app.dd_metric.value
+            metric_drop_conf_pct = app._point_filters().drop_conf_pct
+            if geometry == PREVIEW_ALIGNMENT and backbone_alignment == AlignMode.NONE.value:
+                raise ValueError(
+                    "Select sim3_points, prescale_gt or metric_mono under Metric alignment "
+                    "before tracking with preview alignment."
+                )
+            self._on_video_model_change()
+            video_settings = VideoDepthSettings(
+                name=VIDEO_MODEL_LABELS[self.video_model.value],
+                checkpoint_path=self.video_checkpoint.value.strip(),
+                repo_path=self.video_repo.value.strip(),
+                allow_download=self.video_download.value,
+                input_size=int(self.video_input_size.value),
+                resolution_level=int(self.video_resolution_level.value),
+                fp32=self.video_fp32.value,
+            )
             query_view, count, sampling = (
                 self.view.value,
                 int(self.count.value),
@@ -313,7 +534,7 @@ class TrackingPanel:
                 raise ValueError("Add or include a query box, or turn off Use query boxes")
             if not cameras:
                 raise ValueError("Select at least one input camera")
-            if geometry != SENSOR:
+            if geometry != SENSOR and geometry not in VIDEO_SOURCES:
                 app._configure_backbone()
             controls = (
                 self.inputs
@@ -321,6 +542,8 @@ class TrackingPanel:
                     self.run_button,
                     self.prepare_button,
                     self.history_picker,
+                    self.clip_frame,
+                    self.restart,
                     app.bb_checkpoint,
                     app.bb_download,
                     app.btn_run,
@@ -330,7 +553,10 @@ class TrackingPanel:
                     app.sl_time,
                     app.dd_backbone,
                     app.sl_lside,
+                    app.btn_default_size,
                     app.cb_condition,
+                    app.dd_align,
+                    app.dd_metric,
                     app.btn_all,
                     app.btn_none,
                     app.btn_apply_preset,
@@ -372,7 +598,12 @@ class TrackingPanel:
                     geometry_source=geometry,
                     backbone=backbone,
                     backbone_runner=app.runner,
+                    backbone_long_side=backbone_long_side,
+                    backbone_alignment=backbone_alignment,
+                    metric_model=metric_model,
+                    metric_drop_conf_pct=metric_drop_conf_pct,
                     conditioned=conditioned,
+                    video_settings=video_settings,
                     progress=self._progress,
                     cancel=self.cancel,
                 )
@@ -394,14 +625,40 @@ class TrackingPanel:
                 )
                 self._restore_controls()
                 value = result if result is not None else clip
-                self.add_result(value)
+                if query_reference:
+                    self._show_query_reference(clip)
+                else:
+                    self.add_result(value)
                 self.message.content = (
                     f"**{self.dd_tracker.value}** · {len(clip.indices)} frames · "
                     f"{result.output.ids.shape[1]:,} points · {result.elapsed:.1f}s tracking. "
-                    "Clip cached; press Play or scrub the frame slider."
+                    "Ready in **Playback**: press **Play clip** or scrub **Clip frame**."
                     if result is not None
-                    else f"**Depth preview** · {len(clip.indices)} frames cached. "
-                    "Play or scrub to inspect geometry, then open 3. Tracking and Run tracking."
+                    else f"**Video depth** · {len(clip.indices)} frames cached. "
+                    "Use **Playback → Play clip** or **Clip frame** to inspect depth. "
+                    "To add tracks, open **3. Tracking → Run tracking**."
+                )
+                if query_reference:
+                    self.message.content = (
+                        f"**Query reference: dataset frame {clip.indices[0]}** · "
+                        f"{self.depth_source_name(clip)}. Position boxes on this depth cloud, "
+                        "then **Run tracking**. Prepared depth will be reused."
+                    )
+                    if not len(app._cloud_pts):
+                        self.message.content += (
+                            " **No depth points pass the current workspace/display filters; "
+                            "relax those filters before adding a box.**"
+                        )
+                if on_ready is not None and (not query_reference or len(app._cloud_pts)):
+                    on_ready()
+            except EmptyQueryRegion:
+                self._restore_controls()
+                self._show_query_reference(clip)
+                self.message.content = (
+                    f"**No query points in the boxes on dataset frame {clip.indices[0]}** · "
+                    f"{self.depth_source_name(clip)}. Showing the exact depth used for selection. "
+                    "Move or resize the boxes on this cloud, then retry. "
+                    "Earlier results remain in Playback."
                 )
             except TrackingCancelled:
                 self.message.content = "Cancelled. Any previous completed result remains available."
@@ -425,20 +682,63 @@ class TrackingPanel:
     def active_clip(self):
         return self.result.clip if self.result is not None else self.preview
 
+    @staticmethod
+    def depth_source_name(clip):
+        geo = clip.geometry.provenance
+        return str(geo.get("video_model") or geo.get("backbone") or "Sensor depth")
+
     def _update_playback_controls(self):
-        self.play.disabled = self.active_clip is None
+        clip = self.active_clip
+        self.play.disabled = self.restart.disabled = self.clip_frame.disabled = clip is None
         self.download_button.disabled = self.rerun_button.disabled = self.result is None
-        self.app.dd_align.disabled = self.app.dd_metric.disabled = self.active_clip is not None
+        for control in (self.app.dd_align, self.app.dd_metric):
+            control.disabled = clip is not None and self.geometry.value != PREVIEW_ALIGNMENT
         self.history_picker.disabled = not self.history
+        self.history_picker.visible = len(self.history) > 1 or (bool(self.history) and clip is None)
+        self.clip_frame.max = max(2, len(clip.indices)) if clip is not None else 2
+        if clip is None:
+            self.clip_frame.value = 1
+            self.timeline.content = "No clip ready to play."
+            self.playback_hint.content = (
+                "Use **Depth → Run video depth** or **Tracking → Run tracking** to enable playback. "
+                "Browse individual frames in **Dataset**."
+            )
+        else:
+            step = clip.indices[1] - clip.indices[0] if len(clip.indices) > 1 else 1
+            self.playback_hint.content = (
+                f"**{'Tracks + depth' if self.result is not None else 'Video depth'}** · "
+                f"{len(clip.indices)} frames · dataset {clip.indices[0]}–{clip.indices[-1]} "
+                f"(step {step}). Play or scrub this computed clip; no models run during playback."
+            )
+
+    def _scrub_clip(self, event):
+        # Server-side timeline updates must not seek again or pause playback.
+        if event.client is not None:
+            self.seek_clip(int(event.target.value) - 1)
+
+    def seek_clip(self, index):
+        self.pause()
+
+        def seek():
+            clip = self.active_clip
+            if clip is None:
+                return
+            timestep = clip.indices[max(0, min(index, len(clip.indices) - 1))]
+            self.app._suspend = True
+            self.app.sl_time.value = timestep
+            self.app._suspend = False
+            self.show_frame(timestep)
+
+        self.app._guarded(seek)
 
     def add_result(self, value: TrackingRun | PreparedClip, label: str | None = None):
         clip = value.clip if isinstance(value, TrackingRun) else value
         geo = clip.geometry.provenance
-        title = geo.get("backbone") or "sensor"
+        title = geo.get("video_model") or geo.get("backbone") or "sensor"
         kind = (
             value.output.metadata.get("tracker", "tracks")
             if isinstance(value, TrackingRun)
-            else "depth preview"
+            else "video depth"
         )
         self._history_serial += 1
         label = (
@@ -457,6 +757,10 @@ class TrackingPanel:
 
     def _activate(self, value):
         self.pause()
+        if self.history_picker.value in self.history:
+            self._history_updating = True
+            self.history_picker.options = list(self.history)
+            self._history_updating = False
         self.result = value if isinstance(value, TrackingRun) else None
         self.preview = None if self.result is not None else value
         clip = self.active_clip
@@ -465,8 +769,8 @@ class TrackingPanel:
         if t not in clip.indices:
             self.app.sl_time.value = clip.indices[0]
         self.app._suspend = False
-        self.show_frame(int(self.app.sl_time.value))
         self._update_playback_controls()
+        self.show_frame(int(self.app.sl_time.value))
 
     def _select_history(self):
         if self._history_updating or self.history_picker.value not in self.history:
@@ -493,6 +797,7 @@ class TrackingPanel:
         if clip is None or timestep not in clip.indices:
             return False
         index = clip.indices.index(timestep)
+        self.clip_frame.value = index + 1
         app, frame = self.app, clip.frames[index]
         app._frame = frame
         app._tracking_frame = True
@@ -523,16 +828,17 @@ class TrackingPanel:
         t = int(app.sl_time.value)
         if not app._tracking_frame or t not in clip.indices:
             self.timeline.content = (
-                f"Frame {t} is outside the cached clip. Press Play to return to it."
+                f"Dataset frame {t} is outside this clip. "
+                "Use **Clip frame** or **Restart clip** to return to it."
             )
             return
         index = clip.indices.index(t)
         if run is None:
             self.timeline.content = (
-                f"**{index + 1} / {len(clip.indices)}** · dataset frame **{t}** · depth preview"
+                f"**{index + 1} / {len(clip.indices)}** · dataset frame **{t}** · video depth"
             )
             app._set_status(
-                f"**{clip.geometry.provenance.get('backbone') or 'Sensor depth'}** · {clip.source_name} · "
+                f"**{clip.geometry.provenance.get('video_model') or clip.geometry.provenance.get('backbone') or 'Sensor depth'}** · {clip.source_name} · "
                 f"{clip.geometry.provenance['source']} · calibrated world (meters)"
             )
             return
@@ -590,8 +896,12 @@ class TrackingPanel:
             return
         if self.active_clip is None or self.app._busy:
             return
+        indices = self.active_clip.indices
+        t = int(self.app.sl_time.value)
+        if t not in indices or t == indices[-1]:
+            self.seek_clip(0)
         self._playing.set()
-        self.play.label = "Pause"
+        self.play.label = "Pause clip"
         if self._play_thread is None or not self._play_thread.is_alive():
             self._play_thread = threading.Thread(
                 target=self._play_loop, name="ontic-playback", daemon=True
@@ -600,7 +910,7 @@ class TrackingPanel:
 
     def pause(self):
         self._playing.clear()
-        self.play.label = "Play"
+        self.play.label = "Play clip"
 
     def _play_loop(self):
         while not self._stop.wait(1 / max(1, int(self.fps.value))):

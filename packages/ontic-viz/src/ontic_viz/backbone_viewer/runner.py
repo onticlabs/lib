@@ -95,6 +95,13 @@ def metric_model_names() -> list[str]:
     return (["da3"] if "da3" in keys else []) + [k for k in keys if k != "da3"]
 
 
+def backbone_default_long_side(name: str) -> int:
+    """Read the registered model's input size without loading its weights."""
+    from ontic_nn.wrappers import BACKBONES
+
+    return BACKBONES[name]().long_side
+
+
 def build_backbone(name: str, long_side: int | None = None, **options) -> BackboneBase:
     """Build a pretrained backbone from its registered config; ``long_side`` overrides
     the backbone's canonical input resolution."""

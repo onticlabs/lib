@@ -3,7 +3,7 @@
 Interactive tools over `ontic-nn` (depth backbones and point trackers) and
 `ontic-data` (dataset loaders). The **Geometry & motion viewer** is a
 [viser](https://viser.studio) web GUI for calibrated depth clouds and persistent
-3D trajectories. It supports MVTracker, TAPIP3D, and TrackCraft3R alongside the
+3D trajectories. It supports MVTracker, TAPIP3D, CoTracker3 with depth lifting, and TrackCraft3R alongside the
 existing depth backbones. The command remains `ontic-backbone-viewer`.
 
 ## Running
@@ -68,58 +68,96 @@ Presets (named `ViewConfig`s: stride / drop-conf% / voxel / SFC / FPS / point si
 colour / alignment mode / workspace box) live in
 `~/.config/ontic/backbone_viewer_presets.json` (override with `--presets` or
 `ONTIC_BACKBONE_VIEWER_PRESETS`). A `<dataset>_default` entry is seeded per dataset only
-when missing and never overwritten, so tuned values persist; **Load dataset** applies it.
+when missing and never overwritten, so tuned values persist; **Load dataset** loads it.
+Point-cloud sampling values loaded from presets remain pending until **Apply point sampling**.
 
-The robot overlay (SynthRobot) needs `mujoco` (`ontic-viz[robot]`) and the sibling
+The robot overlay needs `mujoco` (`ontic-viz[robot]`) and the sibling
 `onticlabs/robotics` checkout with its duobench submodule
 (`git submodule update --init robots/franka_duo/vendor/duobench`; point
 `$ONTIC_ROBOTICS_REPO` at it if it is not a sibling). Missing pieces untick the box and
 say which.
 
+For **robot-dextris**, `alignment_79a476`, frame **0**, includes an estimated Franka
+Duo placement. Enable **4. Display → Hands & workspace → Show robot**. The pose is
+fitted from images, labelled as estimated, and hidden on other frames. SynthRobot
+continues to use its recorded joint angles. See the
+[calibration report](../../docs/robot_dextris_alignment.md) for camera overlays and
+limitations, including the inconsistent P06 view.
+
+Robot recordings can provide `<recording>/robot_alignment.json`; otherwise the
+loader checks the packaged `robot_dextris_alignments/<recording>.json`. The camera
+calibration's SHA-256 must match, so changing the calibrated world cannot silently
+reuse an old placement. Set `load_robot_alignment=False` to disable loading fits.
+
 ## Workflow
 
 1. **Dataset:** load a dataset and trajectory, enable input cameras, and set the
    clip's start frame, frame count and frame step. Image
-   frustums show their calibrated poses; green means selected. Camera selection
-   survives frame changes.
-2. **Depth model:** select a backbone, conditioning and **Backbone checkpoint**
-   (or allow missing-weight downloads). The model hint identifies single- or
-   multi-view depth. **Current-frame depth** runs that model on the current frame;
-   its alignment controls are in this same step. **Depth for tracking** chooses
-   recorded depth or the selected backbone's calibrated predictions, plus clip
-   resolution. **Preview depth clip** prepares geometry without a tracker.
+   frustums show their calibrated poses; click a camera image or frustum in 3D
+   to select or deselect it (green = selected, grey = deselected). Orange predicted
+   frustums toggle their corresponding input camera too. Clicking pauses playback
+   and updates the input-camera checkbox. Camera selection survives frame changes.
+   Depth runs use only the selected cameras. Disabling a camera immediately hides its cached depth
+   points and predicted frustum; re-enabling it restores them without inference.
+   Run depth again to include cameras that were absent from the cached run.
+2. **Depth:** **Video depth** chooses recorded depth or the selected backbone's
+   calibrated predictions, plus playback resolution. Depth places image points in
+   3D so clouds and tracks share the dataset's world coordinates. Preparing it
+   separately is optional: **Run tracking** prepares or reuses it automatically.
+   **Run video depth** computes depth over the selected frames for playback without a tracker.
+   For predicted depth, select a backbone, conditioning and **Backbone checkpoint**
+   (or allow missing-weight downloads). **Single-frame preview** inspects that
+   model on **Dataset frame**, with its own alignment settings; this does not
+   produce a playable clip. **Depth appearance** controls cloud visibility,
+   color and point size. **Point cloud** contains confidence and point-count filters.
+   Pixel stride, confidence, voxel size, SFC stride and maximum sampled points take
+   effect together only when you click **Apply point sampling**. Until then, previews,
+   playback, occupancy and tracking use the last applied settings.
+   **Model long side (px)** automatically starts at the selected backbone's configured
+   input size and applies to both single-frame and video depth runs. Switching models
+   preserves each model's manual override; **Use model default size** restores its default.
+   **Playback long side (px)** controls cached images and geometry independently of
+   backbone inference, which resizes the original images to the model's input size.
 3. **Tracking:** choose a tracker, point budget, sampling and query boxes.
    The depth-input summary shows what step 2 will supply. **Run tracking** adds
    trajectories and reuses matching prepared geometry.
    Queries are sampled once from the displayed surfaces at the first clip frame.
-   They respect **Display** workspace cropping, depth confidence, pixel stride,
-   voxel reduction, SFC stride and applied FPS. Farthest-point sampling spreads
+   They respect **Display** workspace cropping and **Depth** confidence, pixel stride,
+   voxel reduction, SFC stride and applied point sampling. Farthest-point sampling spreads
    queries in 3D; even coverage is faster.
-   Under **3. Tracking → Query boxes**, **Add box** creates a region. Drag its axes to
-   move it, edit **Box size** to resize it, and add more boxes for multiple objects.
+   Under **3. Tracking → Query boxes**, **Add box** prepares/reuses the selected depth,
+   shows the first clip frame, then creates a region. Use **Show query frame** to return
+   to that exact selection geometry after browsing playback or changing depth models.
+   Drag its axes to move it, edit **Box size** to resize it, and add more boxes for multiple objects.
    Seeds must be visible and inside any included box when **Use query boxes** is on.
    Boxes select starting points; trajectories can subsequently leave them.
 
-4. **Display:** adjust clouds, tracks, workspace filters, overlays and saved presets.
+   **Track appearance** controls track visibility, trail length, size and occlusion.
+   **Export** contains the track and Rerun downloads.
 
-**Playback** remains available below all four tabs.
-Play/Pause or scrub **Dataset frame**. Tracking and geometry are cached; playback
-performs no model inference. Point IDs and colors persist, invalid samples break
-trails, and occluded points can be dimmed or hidden. **Cached result** switches
-between up to six completed results for the loaded trajectory, keeping the current
-timestep when shared. Frame step refers to dataset frames; playback FPS is a
-viewing speed, not a recovered capture rate. Frames outside the cached clip show no tracks.
+4. **Display:** adjust workspace filters, overlays, occupancy, measurements and saved presets.
 
-Changing display filters or query boxes hides entire cached trajectories whose
-starting points are excluded. Run tracking again to seed newly included surfaces.
+**Playback** sits in its own panel docked on the left. It plays the selected computed
+clip, either depth alone or depth with tracks. **Play clip / Pause clip**, scrub
+**Clip frame** (1 through the clip's frame count), or use **Restart clip** to return
+to its first frame and pause. The timeline also shows the corresponding dataset
+frame. Use **Dataset → Dataset frame** to browse the full trajectory; frames outside
+the computed clip show no tracks. Browsing or scrubbing pauses playback.
+Tracking and geometry are cached; playback performs no model inference. Point IDs
+and colors persist, invalid samples break trails, and occluded points can be dimmed
+or hidden. **Result to play** appears when multiple results are available, switching
+between up to six results while keeping the current timestep when shared.
+**Playback settings** contains speed in frames per second and looping. Speed affects
+only viewing; **Dataset → Clip → Frame step** controls which dataset frames are computed.
+
+Applying point-cloud filters or changing workspace/query boxes hides entire cached
+trajectories whose starting points are excluded. Run tracking again to seed newly
+included surfaces.
+
 Workspace and depth-confidence filters also apply to each later trajectory
 sample. Excluded samples disappear and break trails, including when occluded
 tracks are enabled. Confidence follows the current projected point in the
 tracking cameras, using the same per-frame threshold as the depth cloud.
-
-**Display:** adjust trail length, visibility threshold, track size and the
-background cloud. Existing cloud thinning, occupancy, ruler, hand/robot
-overlays, workspace cropping and saved display presets remain available.
 
 **Download tracks (.npz):** save IDs, world trajectories, validity/visibility,
 query provenance, dataset frame indices, camera calibration and metadata.
@@ -131,20 +169,62 @@ The UI reports the tracker, geometry source and world units for the displayed ru
 
 ### Geometry for tracking
 
-Every clip uses the dataset's synchronized, normalized intrinsics and rigid
-camera-to-world poses in meters. Select one explicit depth policy:
+Every clip is expressed in the dataset's metric world frame. Select one explicit
+depth and camera policy:
 
 | Depth source | Requirements | Preparation |
 |---|---|---|
 | Sensor / GT depth | Recorded depth | Uses recorded camera-z depth directly; no backbone or DINO load. |
+| Backbone depth · preview alignment | Backbone; metric alignment selected under Alignment | Uses the same alignment as the single-frame preview. `sim3_points` preserves the aligned predicted cameras and intrinsics; `prescale_gt` uses dataset cameras; `metric_mono` gets scale from the selected metric model. |
 | Backbone depth · sensor scale | Backbone and recorded depth | Fits a median depth scale per frame against recorded depth, then lifts with calibrated dataset cameras. |
 | Backbone depth · camera-rig scale | Camera-predicting backbone; at least two distinct calibrated camera centers | Fits predicted-to-calibrated camera scale per frame, scales depth, then lifts with dataset cameras. Degenerate rigs are rejected. |
+| Video depth · metric | Video Depth Anything, VeloDepth, or DA3 Nested | Runs the full ordered clip per camera; uses predicted meters and dataset cameras. No recorded depth required. |
+| Video depth · clip sensor scale | Video model and recorded depth | Fits one median scale per camera over the whole clip, preserving the model's temporal scale consistency. |
+
+Running a backbone on the current frame selects **Backbone depth · preview
+alignment** for tracking and reuses that frame's prediction when the dataset,
+cameras and model settings match. This avoids changing a VGGT `sim3_points`
+preview into a cloud lifted with different cameras. Playback may downsample the
+depth, but keeps the selected camera geometry. Changing alignment applies to the
+next clip run; existing cached clips retain their original alignment. `none`
+cannot supply metric world geometry for tracking. Sim(3) alignment needs at least
+two distinct camera centers; use `metric_mono` or sensor scale for a single view.
+
+For depth that jumps during playback, choose **Video depth · metric** under
+**2. Depth → Video depth → Depth source**, then **Video Depth Anything Small**,
+**Base**, **Large**, **VeloDepth**, or **DA3 Nested Giant-Large 1.1 (joint clip)**.
+VDA is the practical baseline, VeloDepth prioritizes temporal propagation, and
+DA3 is a heavier joint-geometry comparison. See the [model research](../../docs/video_depth_models.md).
+Use **Run video depth** to compute it for playback, or run tracking
+directly. Playback reuses the cached video predictions. **Clip sensor scale**
+can calibrate overall metric scale when recorded depth is available; it never
+refits a separate scale on every frame. Each camera is an independent video,
+so the models do not enforce consistency between different cameras.
+
+The standard [backbone installer](../ontic-nn/README.md#geometry-backbone-setup)
+includes the pinned upstream sources. The **Video research checkout** field can
+instead point to another compatible upstream checkout. Enable **Download video
+weights** to fetch the selected metric checkpoint, or supply **Video checkpoint**
+(a file or directory containing `metric_video_depth_anything_vits.pth`,
+`_vitb.pth`, or `_vitl.pth` for VDA; a complete HF snapshot directory for VeloDepth
+or DA3). Downloads default to disabled. VeloDepth also needs upstream ConvNeXt
+initializers in the `torch.hub` cache for offline construction.
+**VDA short side**, **DA3 long side**, and **VeloDepth resolution level** control
+internal resolution separately from the cached playback resolution. Defaults come
+from each model's configuration: VDA uses short side 518, DA3 Nested uses long side
+504, and VeloDepth uses resolution level 0. **Use video model default size** restores
+these settings after a manual override. Use level 0 for
+VeloDepth's lowest pixel budget, and short clips for DA3's joint attention.
+Each model retains its own file paths and inference settings. Closely spaced frames provide
+more useful temporal context. Cancel takes effect after the current camera video.
+Video model, checkpoint and inference settings participate in the geometry cache
+key and are saved with recordings; replaying a recording does not require weights.
 
 Calibration scales are recorded in output provenance. **Trajectories are never
 aligned per frame.** Single-frame display alignment is disabled for cached tracks
 so the cloud and trajectories stay in the same world frame. Geometry is reused
 when changing tracker or query settings; dataset, trajectory, clip, camera,
-resolution, backbone, conditioning or geometry-policy changes invalidate that cache.
+resolution, backbone, conditioning, video settings or geometry-policy changes invalidate that cache.
 Backbone confidence is retained in clip caches and viewer recordings separately
 from depth validity. Sensor depth has no confidence score. For cached clip clouds,
 voxel reduction retains a real surface sample per voxel so displayed points and
@@ -154,6 +234,10 @@ yet connected to the viewer; boxes provide a calibration-consistent multi-view
 selection without a segmentation model.
 
 MVTracker jointly uses all enabled views and needs at least seven frames.
+CoTracker3 follows PointWorld's approach: track each enabled RGB camera independently,
+then lift its tracks with the selected depth and calibrated cameras. It uses the
+same displayed seeds and query boxes, keeps source-camera identities separate,
+and excludes occluded or invalid-depth 3D samples. Depth comes from **2. Depth**.
 TAPIP3D uses one selected tracker camera. TrackCraft3R also uses one camera and
 requires exactly 12 frames in this viewer, with its native 480 × 832 grid.
 Monocular tracking can use depth prepared by a multi-view backbone. These adapters
@@ -217,7 +301,8 @@ download settings, including any edits made during the session:
   "backbone_checkpoints": {"vggt": "/models/vggt.pt", "moge3": "/models/moge3.pt"},
   "trackers": {
     "mvtracker": {"repo_path": "/research/mvtracker", "checkpoint_path": "/models/mvtracker.pth"},
-    "tapip3d": {"repo_path": "/research/TAPIP3D", "checkpoint_path": "/models/tapip3d_final.pth"}
+    "tapip3d": {"repo_path": "/research/TAPIP3D", "checkpoint_path": "/models/tapip3d_final.pth"},
+    "cotracker3": {"repo_path": "/research/co-tracker", "checkpoint_path": "/models/scaled_online.pth"}
   }
 }
 ```
@@ -289,10 +374,12 @@ The viewer lists whatever the registries contain:
 | `runner.py` | `BackboneRunner` (one backbone + one metric model on the GPU, freed on switch, inference mode), `BackboneResult`, `AlignMode`, `metric_unproject`. |
 | `render.py` | Colour modes, frustum math, `build_point_cloud`, `pred_cameras_in_display_frame`. |
 | `config.py` | `ViewConfig`, per-dataset defaults, preset store. |
-| `robot_model.py` | FR3 Duo link geometry posed from recorded joint angles (mujoco). |
+| `robot_model.py` | FR3 Duo link geometry posed from recorded or explicitly labelled image-fitted joints (MuJoCo). |
 | `app.py` | `BackboneViewer`: scene, depth and display GUI wiring. |
 | `tracking.py` | Clip preparation/cache, geometry calibration, query sampling, inference and NPZ export. |
+| `video_depth.py` | Temporal model settings, whole-clip depth inference and optional per-camera sensor scale. |
 | `tracking_panel.py` | Background tracking jobs, cancellation, playback, stable colors and trails. |
+| `query_regions.py` | Editable world-space boxes for selecting query points from the reference frame. |
 | `recording.py` | Save/reopen calibrated clips with optional tracks; no inference or pickle on reload. |
 | `demo.py` | Deterministic RGB-D scene with known motion and visibility. |
 | `rerun_export.py` | Optional headless `.rrd` recording. |

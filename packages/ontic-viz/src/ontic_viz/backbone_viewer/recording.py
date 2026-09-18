@@ -134,7 +134,9 @@ def recording_label(path: str | Path) -> str:
         source = {"hocap": "HOCAP", "synthrobot": "SynthRobot", "physinone": "PhysInOne"}.get(
             meta["source"], meta["source"]
         )
-        backbone = meta["geometry_provenance"].get("backbone")
+        backbone = meta["geometry_provenance"].get("video_model") or meta[
+            "geometry_provenance"
+        ].get("backbone")
         depth = {None: "Sensor depth", "vggt": "VGGT depth", "moge3": "MoGe-3 depth"}.get(
             backbone, backbone
         )
@@ -143,6 +145,7 @@ def recording_label(path: str | Path) -> str:
             tracker = {
                 "mvtracker": "MVTracker",
                 "tapip3d": "TAPIP3D",
+                "cotracker3": "CoTracker3",
                 "trackcraft3r": "TrackCraft3R",
                 "analytic_demo": "Analytic demo",
             }.get(tracker, tracker)

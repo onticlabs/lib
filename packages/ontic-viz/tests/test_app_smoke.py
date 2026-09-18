@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -77,20 +78,74 @@ def _wire(viewer, frame):
     viewer._result = _result(frame)
 
 
+def _click_camera(handle):
+    callbacks = handle._impl.click_cb
+    assert len(callbacks) == 1
+    callbacks[0].callback(SimpleNamespace(target=handle))
+
+
+def test_backbone_size_defaults_and_overrides_follow_the_selected_model(viewer):
+    from ontic_nn.wrappers import BACKBONES
+
+    assert viewer.sl_lside.value == BACKBONES[viewer.dd_backbone.value]().long_side
+    viewer.sl_lside.value = 280
+    for name in ("moge3", "vggt", "ma", "dvlt", "pi3x"):
+        viewer.dd_backbone.value = name
+        viewer._on_backbone_change()
+        assert viewer.sl_lside.value == BACKBONES[name]().long_side
+    viewer.dd_backbone.value = "da3"
+    viewer._on_backbone_change()
+    assert viewer.sl_lside.value == 280
+
+
 def test_cameras_checkboxes_frustums_and_toggle(viewer):
     frame = _frame(v=3)
     viewer._frame = frame
     viewer._rebuild_cameras(frame)
     assert len(viewer._cam_checks) == 3 and len(viewer._cam_scene) == 3
     assert viewer._selected_ix() == [0, 1, 2]
-    viewer._toggle_cam(2)
+    _click_camera(viewer._cam_scene[2])
     assert viewer._selected_ix() == [0, 1]
     assert tuple(viewer._cam_scene[2].color) == _OFF_COLOR
     assert tuple(viewer._cam_scene[0].color) == _INPUT_COLOR
+    _click_camera(viewer._cam_scene[2])
+    assert viewer._selected_ix() == [0, 1, 2]
     viewer._set_all(False)
     assert viewer._selected_ix() == []
+    old_camera = viewer._cam_scene[0]
     viewer._rebuild_cameras(_frame(v=2))
     assert len(viewer._cam_checks) == 2
+    _click_camera(old_camera)
+    assert viewer._selected_ix() == []  # ignore delayed events from removed cameras
+
+
+def test_depth_inference_only_receives_cameras_selected_in_3d(viewer, monkeypatch):
+    frame = _frame(v=3)
+    viewer._frame = frame
+    viewer._rebuild_cameras(frame)
+    _click_camera(viewer._cam_scene[1])
+    selected = []
+
+    def run(frame, indices, **kwargs):
+        selected.append(list(indices))
+        return BackboneResult(
+            depth=torch.full((len(indices), 14, 14), 2.0),
+            conf=None,
+            pred_extrinsics=None,
+            pred_intrinsics=None,
+            gt_extrinsics=frame.extrinsics[indices],
+            gt_intrinsics=frame.intrinsics[indices],
+        )
+
+    monkeypatch.setattr(viewer, "_configure_backbone", lambda: None)
+    monkeypatch.setattr(viewer.runner, "load", lambda name: None)
+    monkeypatch.setattr(viewer.runner, "run", run)
+    viewer._run()
+    assert selected == [[0, 2]]
+    assert viewer._run_ix == [0, 2]
+    _click_camera(viewer._cam_scene[1])
+    assert selected == [[0, 2]]  # selection changes never trigger inference
+    assert "Run depth again" in viewer.status.content
 
 
 def test_render_cloud_all_color_modes_and_fps_on_demand(viewer):
@@ -100,8 +155,111 @@ def test_render_cloud_all_color_modes_and_fps_on_demand(viewer):
         viewer._render_cloud()
         assert "points" in viewer.status.content
     assert "fps" not in viewer.status.content
-    viewer._render_cloud(5)
+    viewer.sl_fps.value = 5
+    viewer._apply_point_sampling()
     assert "fps 5" in viewer.status.content
+
+
+def test_point_cloud_edits_wait_for_apply_even_across_other_redraws(viewer, monkeypatch):
+    _wire(viewer, _frame(v=2))
+    viewer._render_cloud()
+    original = viewer._cloud_pts.copy()
+    original_filters = viewer._point_filters()
+    redraws = []
+    render_cloud = viewer._render_cloud
+
+    def render():
+        redraws.append(True)
+        render_cloud()
+
+    monkeypatch.setattr(viewer, "_render_cloud", render)
+    for control, value in (
+        (viewer.sl_stride, 4),
+        (viewer.sl_conf, 50),
+        (viewer.sl_voxel, 0.01),
+        (viewer.sl_sfc, 2),
+        (viewer.sl_fps, 5),
+    ):
+        control.value = value
+        # Dispatch the same callbacks as a client GUI edit, synchronously.
+        for callback in control._impl.update_cb:
+            callback(SimpleNamespace(client=object(), target=control))
+    assert not redraws
+    assert viewer._point_filters() == original_filters
+
+    # Appearance and camera updates must not commit the pending sampling values.
+    viewer.dd_color.value = "per-view"
+    viewer._cheap_update()
+    _click_camera(viewer._cam_scene[0])
+    _click_camera(viewer._cam_scene[0])
+    np.testing.assert_allclose(viewer._cloud_pts, original)
+    assert "stride 2, drop 0%" in viewer.status.content
+
+    viewer._apply_point_sampling()
+    assert len(viewer._cloud_pts) == 5
+    assert "stride 4, drop 50%" in viewer.status.content
+    assert "voxel 0.010m, sfc/2, fps 5" in viewer.status.content
+
+
+def test_sampling_presets_and_edits_before_depth_stay_pending(viewer):
+    from ontic_viz.backbone_viewer.config import ViewConfig
+
+    viewer._apply_config(ViewConfig(stride=4, fps_max_points=5))
+    assert viewer._point_filters().stride == 2
+    # Apply must work even before the first depth result exists.
+    viewer._apply_point_sampling()
+    _wire(viewer, _frame(v=2))
+    viewer._render_cloud()
+    assert len(viewer._cloud_pts) == 5
+    viewer._apply_config(ViewConfig(stride=1, fps_max_points=0))
+    assert len(viewer._cloud_pts) == 5
+    viewer._apply_point_sampling()
+    assert len(viewer._cloud_pts) == 2 * 14 * 14
+
+
+def test_camera_selection_filters_cached_moge_depth_without_inference(viewer):
+    frame = _frame(v=4)
+    frame.extrinsics[:, 0, 3] = torch.arange(4) * 10
+    _wire(viewer, frame)
+    # The run contains a noncontiguous subset of dataset cameras.
+    subset = [1, 3]
+    result = _result(frame)
+    result.pred_extrinsics = result.pred_intrinsics = None
+    result.depth = result.depth[subset]
+    result.conf = result.conf[subset]
+    result.gt_extrinsics = frame.extrinsics[subset]
+    result.gt_intrinsics = frame.intrinsics[subset]
+    viewer._result = result
+    viewer._run_ix = subset
+    viewer._run_images = frame.images[subset]
+    viewer._suspend = True
+    viewer.dd_backbone.value = "moge3"
+    viewer.cb_crop.value = False
+    viewer.sl_voxel.value = 0
+    viewer.sl_sfc.value = 1
+    viewer._suspend = False
+    viewer._render_cloud()
+    original = viewer._cloud_pts.copy()
+    assert len(original) > 0
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Camera visibility must not rerun inference")
+
+    viewer.runner.run = viewer.runner.compute_metric_scale = forbidden
+    _click_camera(viewer._cam_scene[1])
+    assert len(viewer._cloud_pts) == len(original) // 2
+    assert (viewer._cloud_pts[:, 0] > 20).all()  # dataset camera 3
+    assert viewer._result is result
+    assert (result.depth > 0).all()  # cached depth remains intact
+    viewer._set_all(False)
+    assert len(viewer._cloud_pts) == 0
+    viewer._toggle_occupancy()
+    assert viewer._occupancy_on
+    viewer._toggle_occupancy()
+    viewer._toggle_cam(0)  # no prediction for this camera in the cached run
+    assert len(viewer._cloud_pts) == 0
+    viewer._set_all(True)
+    np.testing.assert_allclose(viewer._cloud_pts, original)
 
 
 def test_metric_mono_scale_fit_cached_and_invalidated(viewer):
@@ -113,7 +271,10 @@ def test_metric_mono_scale_fit_cached_and_invalidated(viewer):
     viewer._on_metric_model_change()
     assert viewer._result.metric_scale == 2.5  # recomputed by the cheap update
     viewer.runner.compute_metric_scale = lambda *a, **k: 9.9
-    viewer._on_conf_change()
+    viewer.sl_conf.value = 50
+    viewer._cheap_update()
+    assert viewer._result.metric_scale == 2.5
+    viewer._apply_point_sampling()
     assert viewer._result.metric_scale == 9.9
 
     def _boom(*a, **k):
@@ -181,6 +342,11 @@ def test_pred_camera_overlay(viewer):
     viewer._render_pred_cameras()
     assert len(viewer._pred_cam_scene) == 2
     assert all(tuple(f.color) == _PRED_COLOR for f in viewer._pred_cam_scene)
+    _click_camera(viewer._pred_cam_scene[0])
+    assert len(viewer._pred_cam_scene) == 1
+    assert not viewer._cam_checks[0].value
+    _click_camera(viewer._cam_scene[0])
+    assert len(viewer._pred_cam_scene) == 2
 
     # metric_mono without a fitted scale draws nothing; the GUI callback must not be
     # able to fit one here (it would load a real metric model).
@@ -240,14 +406,48 @@ def test_hands_workspace_and_presets(viewer):
     assert "genesis_default" in viewer._configs
 
 
-def test_robot_overlay_refuses_frames_without_joint_angles(viewer):
+def test_robot_overlay_hides_frames_without_joint_angles(viewer):
     viewer._frame = _frame()
     viewer.cb_robot.value = True
     viewer._draw_robot()
-    assert viewer.cb_robot.value is False and viewer._robot_scene == {}
+    assert viewer.cb_robot.value is True and viewer._robot_scene == {}
+    assert "No robot pose" in viewer.md_robot.content
     viewer.cb_action_pts.value = True
     viewer._draw_action_points()
     assert viewer.cb_action_pts.value is False and viewer._action_pts_scene == []
+
+
+def test_estimated_robot_pose_is_removed_when_scrubbing_and_restored_on_return(viewer):
+    from types import SimpleNamespace
+
+    geom = SimpleNamespace(
+        name="arm",
+        vertices=np.eye(3, dtype=np.float32),
+        faces=np.array([[0, 1, 2]], dtype=np.uint32),
+        color=(1.0, 1.0, 1.0),
+    )
+    viewer._robot_model = lambda: SimpleNamespace(
+        link_geoms=[geom],
+        geom_world_poses=lambda *args: {"arm": (np.zeros(3), np.array([1.0, 0, 0, 0]))},
+    )
+    fitted = _frame()
+    fitted.robot = {
+        "qpos": {},
+        "base_pose": [0, 0, 0, 1, 0, 0, 0],
+        "source": "image_fit",
+        "frame_index": 0,
+    }
+    viewer._frame = fitted
+    viewer.cb_robot.value = True
+    viewer._draw_robot()
+    assert len(viewer._robot_scene) == 1
+    assert "estimated pose" in viewer.md_robot.content
+    viewer._frame = _frame()
+    viewer._draw_robot()
+    assert viewer._robot_scene == {} and viewer.cb_robot.value
+    viewer._frame = fitted
+    viewer._draw_robot()
+    assert len(viewer._robot_scene) == 1
 
 
 # --------------------------------------------------------------------------- #

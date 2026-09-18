@@ -13,9 +13,13 @@ import torch
 
 from ontic_nn.trackers.common import make_tracker_output, validate_tracker_inputs
 from ontic_viz.backbone_viewer.demo import DemoSource
-from ontic_viz.backbone_viewer.runner import BackboneResult
+from ontic_viz.backbone_viewer.runner import (
+    BackboneResult,
+    aligned_depth_and_cameras,
+)
 from ontic_viz.backbone_viewer.render import PointFilters, build_point_cloud
 from ontic_viz.backbone_viewer.tracking import (
+    PREVIEW_ALIGNMENT,
     RIG_SCALE,
     SENSOR_SCALE,
     ClipSpec,
@@ -138,6 +142,87 @@ def test_backbone_scale_is_calibrated_before_tracking(source, policy):
     assert clip.geometry.units == ("meters",)
 
 
+@pytest.mark.parametrize("alignment", ["sim3_points", "prescale_gt", "metric_mono"])
+def test_tracking_preserves_preview_depth_cameras_and_intrinsics(source, alignment):
+    backbone = ScaledBackbone()
+    raw_run = backbone.run
+    results = []
+
+    def run(frame, indices, **kwargs):
+        result = raw_run(frame, indices, **kwargs)
+        # Camera predictions differ beyond a common scale: replacing these
+        # with dataset cameras must change the cloud and fail this regression.
+        result.pred_extrinsics[0, :3, :3] = torch.tensor([[0.8, 0, 0.6], [0, 1, 0], [-0.6, 0, 0.8]])
+        result.pred_intrinsics = result.pred_intrinsics.clone()
+        result.pred_intrinsics[:, 0, 0] *= 1.3
+        result.metric_scale = 0.25
+        results.append(result)
+        return result
+
+    backbone.run = run
+    backbone.compute_metric_scale = lambda *a, **kw: 0.25
+
+    runner = TrackingRunner()
+    args = (source, 0, ClipSpec(length=2), ("left", "right"))
+    options = dict(
+        geometry_source=PREVIEW_ALIGNMENT,
+        backbone="fake",
+        backbone_runner=backbone,
+        backbone_alignment=alignment,
+    )
+    clip = runner.prepare(*args, **options)
+    for t, result in enumerate(results):
+        depth, poses, intrinsics = aligned_depth_and_cameras(result, alignment)
+        torch.testing.assert_close(clip.geometry.depth[0, t], depth)
+        torch.testing.assert_close(clip.geometry.extrinsics[0, t], poses)
+        torch.testing.assert_close(clip.geometry.intrinsics[0, t], intrinsics)
+        expected = build_point_cloud(result, clip.images[0, t], align_mode=alignment)[0]
+        actual = build_point_cloud(clip.display_result(t), clip.images[0, t])[0]
+        np.testing.assert_allclose(actual, expected, atol=1e-6)
+    assert clip.geometry.provenance["backbone_alignment"] == alignment
+    if alignment != "prescale_gt":
+        assert not torch.allclose(clip.geometry.extrinsics[0, 0], clip.frames[0].extrinsics)
+        assert not torch.allclose(clip.geometry.intrinsics[0, 0], clip.frames[0].intrinsics)
+    assert runner.prepare(*args, **options) is clip
+    options["backbone_alignment"] = "prescale_gt" if alignment == "sim3_points" else "sim3_points"
+    assert runner.prepare(*args, **options) is not clip
+
+
+def test_preview_alignment_rejects_unanchored_or_degenerate_geometry(source):
+    options = dict(
+        geometry_source=PREVIEW_ALIGNMENT,
+        backbone="fake",
+        backbone_runner=ScaledBackbone(),
+    )
+    with pytest.raises(ValueError, match="metric world frame"):
+        prepare(source, backbone_alignment="none", **options)
+    with pytest.raises(ValueError, match="two distinct camera"):
+        TrackingRunner().prepare(source, 0, ClipSpec(length=2), ("left",), **options)
+
+
+def test_backbone_input_size_is_independent_of_playback_and_part_of_cache_key(source):
+    backbone, runner = ScaledBackbone(), TrackingRunner()
+    native_run = backbone.run
+
+    def run(frame, indices, **kwargs):
+        assert frame.images.shape[-2:] == (source.height, source.width)
+        return native_run(frame, indices, **kwargs)
+
+    backbone.run = run
+    args = (source, 0, ClipSpec(length=2, image_long_side=16), ("left", "right"))
+    options = dict(geometry_source=SENSOR_SCALE, backbone="fake", backbone_runner=backbone)
+    clip = runner.prepare(*args, **options)
+    assert backbone.long_side is None  # use the model's own default, not playback's 16 px
+    assert clip.images.shape[-2:] == (12, 16)
+    assert runner.prepare(*args, **options) is clip
+    assert backbone.calls == 2
+    other = runner.prepare(*args, **options, backbone_long_side=966)
+    assert other is not clip and backbone.calls == 4
+    assert backbone.long_side == 966
+    assert other.geometry.provenance["backbone_long_side"] == 966
+    assert runner.prepare(*args, **options, backbone_long_side=966) is other
+
+
 def test_sensor_depth_missing_and_degenerate_rig_are_rejected(source):
     original = source.get_frame
     source.get_frame = lambda *a, **kw: dataclasses.replace(original(*a, **kw), depth=None)
@@ -164,7 +249,9 @@ def test_queries_and_ids_stay_on_reference_surfaces(source):
         seed_queries(clip.geometry, 32, crop=((-1, -1, -1), (0.1, 0.1, 0.1)))
 
 
-@pytest.mark.parametrize("name,view_count", [("mvtracker", 2), ("tapip3d", 1), ("trackcraft3r", 1)])
+@pytest.mark.parametrize(
+    "name,view_count", [("mvtracker", 2), ("tapip3d", 1), ("trackcraft3r", 1), ("cotracker3", 2)]
+)
 def test_neural_adapter_receives_explicit_views_and_cpu_export(source, name, view_count):
     observed = []
 

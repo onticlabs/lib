@@ -23,26 +23,39 @@ import torch.nn.functional as F
 from ontic_lib.camera import project_world_points
 from ontic_lib.depth.alignment import fit_depth_scale
 from ontic_lib.pointops import align_camera_poses_sim3, furthest_point_indices
+from ontic_lib.pointops.alignment import compute_alignment
 from ontic_nn.trackers import TRACKERS, GeometrySequence, PointQueries, TrackerOutput
 
 from .data_source import Frame
 from .render import PointFilters, build_point_cloud, confidence_threshold
-from .runner import BackboneResult, BackboneRunner
+from .runner import AlignMode, BackboneResult, BackboneRunner, effective_align_mode
+from .video_depth import (
+    VIDEO_SOURCES,
+    VideoDepthSettings,
+    build_video_depth,
+    prepare_video_depth,
+)
 
 SENSOR = "Sensor / GT depth"
 SENSOR_SCALE = "Backbone depth · sensor scale"
 RIG_SCALE = "Backbone depth · camera-rig scale"
-GEOMETRY_SOURCES = [SENSOR, SENSOR_SCALE, RIG_SCALE]
+PREVIEW_ALIGNMENT = "Backbone depth · preview alignment"
+GEOMETRY_SOURCES = [SENSOR, PREVIEW_ALIGNMENT, SENSOR_SCALE, RIG_SCALE, *VIDEO_SOURCES]
 TRACKER_LABELS = {
     "Analytic demo (no model)": "demo",
     "MVTracker": "mvtracker",
     "TAPIP3D": "tapip3d",
+    "CoTracker3": "cotracker3",
     "TrackCraft3R": "trackcraft3r",
 }
 
 
 class TrackingCancelled(Exception):
     pass
+
+
+class EmptyQueryRegion(ValueError):
+    """The prepared reference geometry has no eligible points in the query boxes."""
 
 
 def check_cancel(cancel: Event | None):
@@ -193,7 +206,7 @@ def seed_queries(
         keep &= region_mask(queries.xyz_world[0], regions)
     candidates = torch.where(keep)[0]
     if len(candidates) == 0:
-        raise ValueError(
+        raise EmptyQueryRegion(
             "The workspace crop or query boxes excludes all visible reference points; enlarge the boxes or relax the filters"
         )
     if len(candidates) > 16000:
@@ -253,6 +266,8 @@ def build_tracker(settings: TrackerSettings, device: str):
         cfg.repo_path = settings.repo_path or None
         cfg.base_model_cache_dir = settings.base_model_cache_dir or None
         cfg.device = device
+    elif settings.name == "cotracker3":
+        cfg.repo_path = settings.repo_path or None
     path = None
     if settings.name == "mvtracker" and settings.repo_path:
         path = str(Path(settings.repo_path).expanduser().resolve())
@@ -274,9 +289,22 @@ def build_tracker(settings: TrackerSettings, device: str):
 
 
 class TrackingRunner:
-    def __init__(self, device="cpu", *, builder: Callable = build_tracker):
+    def __init__(
+        self,
+        device="cpu",
+        *,
+        builder: Callable = build_tracker,
+        video_builder: Callable = build_video_depth,
+    ):
         self.device, self.builder = device, builder
+        self.video_builder = video_builder
         self.cached_clip: PreparedClip | None = None
+        self.backbone_frame: tuple[tuple, BackboneResult] | None = None
+
+    @staticmethod
+    def backbone_frame_key(source, traj, t, cameras, runner, backbone, long_side, conditioned):
+        model = runner.model_key(backbone) if hasattr(runner, "model_key") else backbone
+        return (id(source), traj, t, cameras, model, long_side, conditioned)
 
     def prepare(
         self,
@@ -288,12 +316,21 @@ class TrackingRunner:
         geometry_source=SENSOR,
         backbone="",
         backbone_runner: BackboneRunner | None = None,
+        backbone_long_side: int | None = None,
+        backbone_alignment: str = AlignMode.SIM3_POINTS.value,
+        metric_model: str = "da3",
+        metric_drop_conf_pct: float = 0.0,
         conditioned=False,
+        video_settings: VideoDepthSettings = VideoDepthSettings(),
         progress=lambda msg: None,
         cancel: Event | None = None,
     ) -> PreparedClip:
         check_cancel(cancel)
         indices = spec.indices(source.num_timesteps(traj))
+        video = geometry_source in VIDEO_SOURCES
+        uses_backbone = geometry_source in (PREVIEW_ALIGNMENT, SENSOR_SCALE, RIG_SCALE)
+        preview_alignment = geometry_source == PREVIEW_ALIGNMENT
+        alignment = AlignMode(backbone_alignment) if preview_alignment else None
         key = (
             id(source),
             traj,
@@ -305,9 +342,13 @@ class TrackingRunner:
                 if hasattr(backbone_runner, "model_key")
                 else backbone
             )
-            if geometry_source != SENSOR
+            if uses_backbone
             else "",
-            conditioned if geometry_source != SENSOR else False,
+            conditioned if uses_backbone else False,
+            backbone_long_side if uses_backbone else None,
+            alignment,
+            (metric_model, metric_drop_conf_pct) if alignment == AlignMode.METRIC_MONO else None,
+            video_settings if video else None,
         )
         if self.cached_clip is not None and self.cached_clip.key == key:
             progress("Reusing cached clip geometry")
@@ -322,16 +363,24 @@ class TrackingRunner:
             raise ValueError(
                 "Camera-rig scale needs at least two geometry cameras with a nonzero baseline"
             )
-        if geometry_source != SENSOR and backbone_runner is None:
+        if uses_backbone and backbone_runner is None:
             raise ValueError("A backbone runner is required for predicted geometry")
+        if alignment == AlignMode.NONE:
+            raise ValueError(
+                "Tracking needs geometry in the dataset's metric world frame. "
+                "Choose sim3_points, prescale_gt or metric_mono "
+                "for Metric alignment, "
+                "or select sensor scale."
+            )
         frames, display_frames, depths, scales, confidences = [], [], [], [], []
+        geometry_cameras, geometry_intrinsics = [], []
+        camera_source = "dataset calibration"
         try:
             for i, t in enumerate(indices):
                 check_cancel(cancel)
                 progress(f"Preparing frame {i + 1}/{len(indices)} · dataset frame {t}")
-                frame = resize_frame(
-                    source.get_frame(traj, t, with_depth=True), spec.image_long_side
-                )
+                original_frame = source.get_frame(traj, t, with_depth=True)
+                frame = resize_frame(original_frame, spec.image_long_side)
                 display_frames.append(frame)
                 missing = set(camera_names) - set(frame.cam_names)
                 if missing:
@@ -349,6 +398,12 @@ class TrackingRunner:
                     raise ValueError(
                         "Selected cameras must have consistent image dimensions through the clip"
                     )
+                extrinsics, intrinsics = frame.extrinsics, frame.intrinsics
+                if video:
+                    frames.append(frame)
+                    geometry_cameras.append(extrinsics)
+                    geometry_intrinsics.append(intrinsics)
+                    continue
                 if geometry_source == SENSOR:
                     if frame.depth is None:
                         raise ValueError(
@@ -360,20 +415,75 @@ class TrackingRunner:
                 else:
                     if i == 0:
                         check_cancel(cancel)
-                        backbone_runner.set_long_side(spec.image_long_side)
+                        backbone_runner.set_long_side(backbone_long_side)
                         backbone_runner.load(backbone)
-                    result = backbone_runner.run(
-                        frame, list(range(len(ix))), condition_on_gt_cameras=conditioned
+                    # Let the backbone resize the original pixels to its own input size.
+                    # The playback limit only controls the cached result below.
+                    model_frame = dataclasses.replace(
+                        frame,
+                        images=original_frame.images[ix],
+                        depth=None if original_frame.depth is None else original_frame.depth[ix],
                     )
+                    frame_key = self.backbone_frame_key(
+                        source,
+                        traj,
+                        t,
+                        camera_names,
+                        backbone_runner,
+                        backbone,
+                        backbone_long_side,
+                        conditioned,
+                    )
+                    if self.backbone_frame is not None and self.backbone_frame[0] == frame_key:
+                        result = self.backbone_frame[1]
+                        progress(f"Reusing single-frame backbone result · dataset frame {t}")
+                    else:
+                        result = backbone_runner.run(
+                            model_frame, list(range(len(ix))), condition_on_gt_cameras=conditioned
+                        )
                     depth = result.depth
                     confidence = result.conf
-                    if geometry_source == SENSOR_SCALE:
+                    if preview_alignment:
+                        mode = effective_align_mode(result, alignment)
+                        if mode == AlignMode.METRIC_MONO:
+                            metric_scale = backbone_runner.compute_metric_scale(
+                                result,
+                                model_frame.images,
+                                metric_model,
+                                conf_thresh=confidence_threshold(confidence, metric_drop_conf_pct),
+                            )
+                        else:
+                            metric_scale = None
+                        if mode in (AlignMode.SIM3_POINTS, AlignMode.PRESCALE_GT):
+                            for poses in (result.pred_extrinsics, result.gt_extrinsics):
+                                centers = poses[:, :3, 3]
+                                if (centers - centers.mean(0)).norm(dim=-1).max() < 1e-5:
+                                    raise ValueError(
+                                        "Preview alignment needs at least two distinct camera "
+                                        "centres to determine metric scale; choose metric_mono "
+                                        "or sensor scale for a single camera."
+                                    )
+                        pe, pi = result.pred_extrinsics, result.pred_intrinsics
+                        fitted, cameras, intr = compute_alignment(
+                            None if pe is None else pe[None],
+                            None if pi is None else pi[None],
+                            result.gt_extrinsics[None],
+                            result.gt_intrinsics[None],
+                            mode.value,
+                            metric_scale=metric_scale,
+                            depth=depth[None],
+                        )
+                        scale = float(fitted[0])
+                        extrinsics, intrinsics = cameras[0], intr[0]
+                        if pe is not None and mode != AlignMode.PRESCALE_GT:
+                            camera_source = "backbone cameras aligned to dataset world"
+                    elif geometry_source == SENSOR_SCALE:
                         if frame.depth is None:
                             raise ValueError(
                                 "Sensor scale requires recorded depth for the selected cameras"
                             )
                         reference = F.interpolate(
-                            frame.depth, size=depth.shape[-2:], mode="nearest-exact"
+                            model_frame.depth, size=depth.shape[-2:], mode="nearest-exact"
                         )[:, 0]
                         valid = (
                             torch.isfinite(depth)
@@ -421,6 +531,8 @@ class TrackingRunner:
                             .cpu()
                         )
                 frames.append(frame)
+                geometry_cameras.append(extrinsics)
+                geometry_intrinsics.append(intrinsics)
                 depths.append(depth)
                 scales.append(scale)
                 confidences.append(confidence)
@@ -428,19 +540,38 @@ class TrackingRunner:
             if backbone_runner is not None:
                 backbone_runner.release()
         check_cancel(cancel)
+        video_scales = None
+        if video:
+            video_depth, video_scales = prepare_video_depth(
+                frames,
+                video_settings,
+                geometry_source,
+                self.device,
+                self.video_builder,
+                progress,
+                lambda: check_cancel(cancel),
+            )
+            depths = list(video_depth.unbind(0))
         geometry = GeometrySequence(
             torch.stack(depths)[None],
-            torch.stack([f.extrinsics for f in frames])[None],
-            torch.stack([f.intrinsics for f in frames])[None],
+            torch.stack(geometry_cameras)[None],
+            torch.stack(geometry_intrinsics)[None],
             frame_ids=(f"{source.name}:{traj}:dataset-world",),
             units=("meters",),
             provenance={
                 "source": geometry_source,
-                "backbone": backbone if geometry_source != SENSOR else None,
+                "backbone": backbone if uses_backbone else None,
+                "backbone_long_side": backbone_long_side if uses_backbone else None,
                 "backbone_configuration": str(backbone_runner.model_key(backbone))
-                if geometry_source != SENSOR and hasattr(backbone_runner, "model_key")
+                if uses_backbone and hasattr(backbone_runner, "model_key")
                 else None,
-                "camera_source": "dataset calibration",
+                "video_model": video_settings.name if video else None,
+                "video_configuration": dataclasses.asdict(video_settings) if video else None,
+                "per_camera_clip_depth_scale": video_scales,
+                "temporal_inference": video,
+                "camera_source": camera_source,
+                "backbone_alignment": alignment.value if alignment is not None else None,
+                "metric_model": metric_model if alignment == AlignMode.METRIC_MONO else None,
                 "per_frame_depth_scale": scales,
                 "alignment_stage": "geometry preparation; trajectories are never fitted",
             },
@@ -455,7 +586,9 @@ class TrackingRunner:
             torch.stack([f.images for f in frames])[None],
             geometry,
             camera_names,
-            torch.stack(confidences)[None] if all(c is not None for c in confidences) else None,
+            torch.stack(confidences)[None]
+            if confidences and all(c is not None for c in confidences)
+            else None,
         )
         self.cached_clip = clip
         return clip

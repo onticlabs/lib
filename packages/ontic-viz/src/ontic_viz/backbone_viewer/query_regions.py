@@ -16,6 +16,7 @@ class QueryRegions:
         g = app.server.gui
         with g.add_folder("Query boxes"):
             self.enabled = g.add_checkbox("Use query boxes", False)
+            self.reference = g.add_button("Show query frame")
             self.add = g.add_button("Add box")
             self.selected = g.add_dropdown("Selected box", ["(no boxes)"], disabled=True)
             self.include = g.add_checkbox("Include selected box", True, disabled=True)
@@ -25,12 +26,15 @@ class QueryRegions:
             )
             self.remove = g.add_button("Remove selected box", disabled=True)
             g.add_markdown(
-                "Drag the selected box's axes to move it; edit **Box size** to resize. "
+                "**Add box** first shows the selected depth source on the first clip frame. "
+                "After changing depth settings or browsing playback, use **Show query frame** "
+                "before positioning boxes. Drag the axes to move a box; edit **Box size** to resize. "
                 "Points inside **any included box** can seed tracks, after display filtering. "
                 "Boxes select points on the **first clip frame**; tracks can move outside them."
             )
         self.inputs = [
             self.enabled,
+            self.reference,
             self.add,
             self.selected,
             self.include,
@@ -38,7 +42,8 @@ class QueryRegions:
             self.size,
             self.remove,
         ]
-        self.add.on_click(lambda _: app._guarded(self.add_box))
+        self.reference.on_click(lambda _: app.tracking.show_query_frame())
+        self.add.on_click(lambda _: app.tracking.show_query_frame(on_ready=self.add_box))
         self.remove.on_click(lambda _: app._guarded(self.remove_box))
         self.enabled.on_update(lambda _: app._guarded(self._changed))
         self.selected.on_update(lambda _: app._guarded(self._select))
@@ -58,14 +63,22 @@ class QueryRegions:
         )
 
     def add_box(self):
-        bounds = getattr(self.app, "_cloud_bounds", None)
-        if bounds is None:
-            bounds = (self.app.vec_wmin.value, self.app.vec_wmax.value)
-        lo, hi = (np.asarray(x) for x in bounds)
+        cloud = self.app._cloud_pts
+        points = np.empty((0, 3)) if cloud is None else np.asarray(cloud)
+        points = points[np.isfinite(points).all(-1)]
+        if len(points):
+            lo, hi = np.quantile(points, (0.05, 0.95), axis=0)
+            middle = np.median(points, axis=0)
+            # A bounds midpoint may lie in empty space, especially when metric
+            # depth contains distant outliers. Anchor the box on a shown sample.
+            center = points[np.square(points - middle).sum(-1).argmin()]
+        else:
+            lo, hi = (np.asarray(x) for x in (self.app.vec_wmin.value, self.app.vec_wmax.value))
+            center = (lo + hi) / 2
         self._serial += 1
         name = f"Box {self._serial}"
         self.boxes[name] = dict(
-            center=tuple((lo + hi) / 2), size=tuple(np.maximum((hi - lo) / 3, 0.02)), enabled=True
+            center=tuple(center), size=tuple(np.maximum((hi - lo) / 3, 0.02)), enabled=True
         )
         self._syncing = True
         self.selected.options = list(self.boxes)

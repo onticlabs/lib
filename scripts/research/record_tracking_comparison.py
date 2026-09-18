@@ -1,4 +1,4 @@
-"""Record real RGB-D/backbone → MVTracker comparisons using local checkpoints.
+"""Record real RGB-D/backbone tracking comparisons using local checkpoints.
 
 Run with a compatible GPU environment and Ontic packages on PYTHONPATH. The
 upstream source and weights are explicit; shared environments are not modified.
@@ -39,6 +39,7 @@ def main():
     p.add_argument("--queries", type=int, default=128)
     p.add_argument("--backbone", default="sensor")
     p.add_argument("--backbone-checkpoint")
+    p.add_argument("--tracker", choices=["mvtracker", "cotracker3"], default="mvtracker")
     p.add_argument("--tracker-checkpoint", required=True)
     p.add_argument("--tracker-repo", required=True)
     p.add_argument("--device", default="cuda")
@@ -87,7 +88,7 @@ def main():
     result = runner.run(
         clip,
         TrackerSettings(
-            name="mvtracker",
+            name=args.tracker,
             repo_path=args.tracker_repo,
             checkpoint_path=args.tracker_checkpoint,
             long_side=args.long_side,
@@ -99,12 +100,13 @@ def main():
         progress=lambda message: print(message, flush=True),
     )
     args.output.mkdir(parents=True, exist_ok=True)
-    name = f"{args.dataset}-{args.backbone}-mvtracker"
+    name = f"{args.dataset}-{args.backbone}-{args.tracker}"
     save_recording(result, args.output / f"{name}.viewer.npz")
     (args.output / f"{name}.tracks.npz").write_bytes(export_tracks(result))
     displacement = (result.output.tracks_world[0, -1] - result.output.tracks_world[0, 0]).norm(
         dim=-1
     )
+    endpoint_valid = result.output.valid[0, 0] & result.output.valid[0, -1]
     metadata = {
         "dataset": args.dataset,
         "trajectory": source.list_trajectories()[args.trajectory],
@@ -119,7 +121,9 @@ def main():
         "queries": result.output.ids.shape[-1],
         "valid_fraction": float(result.output.valid.float().mean()),
         "mean_visibility": float(result.output.visibility.mean()),
-        "median_displacement_m": float(displacement.median()),
+        "median_displacement_m": float(displacement[endpoint_valid].median())
+        if endpoint_valid.any()
+        else None,
         "tracking_seconds": result.elapsed,
         "total_seconds": time.perf_counter() - started,
         "note": "Real pretrained inference; these are diagnostics, not tracking accuracy metrics.",
