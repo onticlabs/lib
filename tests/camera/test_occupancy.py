@@ -45,6 +45,20 @@ def test_points_with_radius_stride_and_confidence():
     assert points.shape[0] == 8 and radius.shape[0] == 8
 
 
+def test_points_with_radius_excludes_holes_and_hidden_views():
+    from ontic_lib.structures import pointcloud_from_depth_views
+
+    depth, cameras, intrinsics, confidence = _inputs(views=2)
+    depth[0] = 0  # hidden camera
+    depth[1, 0, :3] = torch.tensor([float("nan"), -1, 0])
+    points, radius = points_with_radius(depth, cameras, intrinsics, confidence)
+    cloud = pointcloud_from_depth_views(
+        depth, cameras, intrinsics, confidence=confidence, minimum_depth=0
+    )
+    torch.testing.assert_close(points, cloud.points)
+    assert points.shape == (13, 3) and torch.isfinite(radius).all() and (radius > 0).all()
+
+
 def test_project_occupancy_marks_centre_and_drops_points_behind():
     point = torch.tensor([[0.0, 0.0, 2.0]])
     masks = project_occupancy(

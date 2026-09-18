@@ -27,8 +27,9 @@ def points_with_radius(
     """Unproject ``(V, H, W)`` z-depth into world points plus a per-point splat radius.
 
     Applies the same stride / ``confidence > threshold`` selection as
-    :func:`ontic_lib.structures.pointcloud_from_depth_views`, so the returned
-    ``(points (N, 3), radius (N,))`` line up with a cloud built from the same inputs.
+    :func:`ontic_lib.structures.pointcloud_from_depth_views` with ``minimum_depth=0``,
+    so the returned ``(points (N, 3), radius (N,))`` line up with a cloud built from
+    the same inputs.
     """
     from ..depth.lifting import depth_to_world_points  # camera <-> depth import cycle
 
@@ -49,6 +50,7 @@ def points_with_radius(
         valid = torch.ones((views, height, width), dtype=torch.bool, device=depth.device)
     else:
         valid = confidence > confidence_threshold
+    valid &= torch.isfinite(depth) & (depth > 0)
 
     if stride > 1:
         points = points[:, ::stride, ::stride]
