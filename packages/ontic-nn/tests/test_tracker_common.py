@@ -184,14 +184,16 @@ def test_registry_import_never_loads_optional_research_packages():
 import importlib.abc
 import sys
 blocked = {'mvtracker', 'models', 'diffsynth', 'evaluation', 'huggingface_hub',
-           'transformers', 'peft', 'modelscope', 'pointops2_cuda', 'torch_scatter'}
+           'transformers', 'peft', 'modelscope', 'pointops2_cuda', 'torch_scatter', 'cotracker'}
 class NoResearchImports(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if fullname.split('.')[0] in blocked:
             raise AssertionError('unexpected optional import: ' + fullname)
 sys.meta_path.insert(0, NoResearchImports())
 from ontic_nn.trackers import TRACKERS
-assert set(TRACKERS) == {'mvtracker', 'tapip3d', 'trackcraft3r'}
+assert set(TRACKERS) == {'mvtracker', 'tapip3d', 'trackcraft3r', 'cotracker3'}
+assert TRACKERS['cotracker3'].CAPABILITIES.multiview
+assert TRACKERS['cotracker3'].CAPABILITIES.visibility_scope == 'query_view'
 assert TRACKERS['mvtracker'].CAPABILITIES.multiview
 assert not TRACKERS['tapip3d'].CAPABILITIES.multiview
 assert not TRACKERS['trackcraft3r'].CAPABILITIES.arbitrary_query_times

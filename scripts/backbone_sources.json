@@ -1,5 +1,17 @@
 [
   {
+    "name": "velodepth",
+    "url": "https://github.com/lpiccinelli-eth/velodepth.git",
+    "revision": "fcb9a899ba6fdb960f8ff5fb3ad81d0ac22f49b2",
+    "path": "."
+  },
+  {
+    "name": "video-depth-anything",
+    "url": "https://github.com/DepthAnything/Video-Depth-Anything.git",
+    "revision": "4f5ae23172ba60fd7bc11ef671cca678842c7072",
+    "path": "."
+  },
+  {
     "name": "depth-anything-3",
     "url": "https://github.com/ByteDance-Seed/Depth-Anything-3.git",
     "revision": "2c21ea849ceec7b469a3e62ea0c0e270afc3281a",

@@ -15,7 +15,16 @@ ptv3 = []                      # pure torch by default; accelerators below
 spconv = ["spconv-cu120>=2.3; python_version < '3.12'"]  # optional sparse-conv backend for PTv3 CPE/stem (no wheels for 3.12+)
 # flash-attn must be built against the local torch; install it manually, it is not an extra.
 timm = ["timm>=0.9"]            # only for loading DINOv2 pretrained weights via timm, if used
-backbones = ["ontic-nn[da3,ma,vggt,pi3x,dvlt,moge3]"]  # source setup: scripts/install_backbones.py
+backbones = ["ontic-nn[da3,ma,vggt,pi3x,dvlt,moge3,video-depth,velodepth]"]  # source setup: scripts/install_backbones.py
+video-depth = [  # https://github.com/DepthAnything/Video-Depth-Anything (checkout on PYTHONPATH or repo_path)
+    "huggingface_hub>=0.24", "numpy>=1.24", "torchvision>=0.19",
+    "opencv-python>=4.8", "einops>=0.7", "tqdm>=4.60", "easydict>=1.13",
+]
+velodepth = [  # https://github.com/lpiccinelli-eth/velodepth (pinned source; no CUDA extensions needed)
+    "huggingface_hub>=0.24", "safetensors>=0.4", "timm>=0.9", "torchvision>=0.19",
+    "numpy>=1.24", "scipy>=1.10", "opencv-python>=4.8", "pillow>=10",
+    "einops>=0.7", "matplotlib>=3.8", "wandb>=0.17", "setuptools<81",
+]
 
 # Backbone wrappers (ontic_nn.wrappers) and metric depth models (ontic_nn.metric_depth).
 # Each extra lists the pip-installable pieces the upstream needs at import / build time; the
@@ -65,6 +74,9 @@ unidepth = [  # https://github.com/lpiccinelli-eth/UniDepth  (package `unidepth`
 
 # Point trackers (ontic_nn.trackers). Install the research source separately;
 # CUDA extensions must match the local torch/CUDA and are not resolved here.
+cotracker3 = [  # https://github.com/facebookresearch/co-tracker; PointWorld's pinned predictor
+    "huggingface_hub>=0.24", "numpy>=1.24",
+]
 mvtracker = [  # https://github.com/ethz-vlg/mvtracker (package `mvtracker`)
     "huggingface_hub>=0.24", "numpy>=1.24", "torchvision>=0.19", "easydict>=1.13",
     "pandas>=2", "pypng", "opencv-python>=4.8", "matplotlib>=3.8", "flow-vis",

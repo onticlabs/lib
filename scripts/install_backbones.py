@@ -34,6 +34,8 @@ RESEARCH_MODULES = {
     "pi3x": "pi3.models.pi3x",
     "dvlt": "dvlt.model.dvlt.model",
     "moge3": "moge.model.v3",
+    "video-depth": "video_depth_anything.video_depth",
+    "velodepth": "velodepth.models",
 }
 
 

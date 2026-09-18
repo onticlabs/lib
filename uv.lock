@@ -2356,13 +2356,17 @@ backbones = [
     { name = "accelerate" },
     { name = "addict" },
     { name = "e3nn" },
+    { name = "easydict" },
+    { name = "einops" },
     { name = "evo" },
     { name = "huggingface-hub" },
     { name = "hydra-core" },
     { name = "imageio" },
+    { name = "matplotlib" },
     { name = "moderngl" },
     { name = "moviepy" },
     { name = "natsort" },
+    { name = "numpy" },
     { name = "omegaconf" },
     { name = "open3d" },
     { name = "opencv-python" },
@@ -2380,12 +2384,18 @@ backbones = [
     { name = "safetensors" },
     { name = "scikit-learn" },
     { name = "scipy" },
+    { name = "setuptools" },
     { name = "termcolor" },
     { name = "timm" },
     { name = "torchvision" },
     { name = "tqdm" },
     { name = "trimesh" },
     { name = "triton", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "wandb" },
+]
+cotracker3 = [
+    { name = "huggingface-hub" },
+    { name = "numpy" },
 ]
 da3 = [
     { name = "addict" },
@@ -2511,11 +2521,34 @@ unidepth = [
     { name = "torchvision" },
     { name = "xformers" },
 ]
+velodepth = [
+    { name = "einops" },
+    { name = "huggingface-hub" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "pillow" },
+    { name = "safetensors" },
+    { name = "scipy" },
+    { name = "setuptools" },
+    { name = "timm" },
+    { name = "torchvision" },
+    { name = "wandb" },
+]
 vggt = [
     { name = "huggingface-hub" },
     { name = "opencv-python" },
     { name = "pillow" },
     { name = "safetensors" },
+]
+video-depth = [
+    { name = "easydict" },
+    { name = "einops" },
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "torchvision" },
+    { name = "tqdm" },
 ]
 
 [package.metadata]
@@ -2525,10 +2558,14 @@ requires-dist = [
     { name = "addict", marker = "extra == 'da3'", specifier = ">=2.4" },
     { name = "e3nn", marker = "extra == 'da3'", specifier = ">=0.5" },
     { name = "easydict", marker = "extra == 'mvtracker'", specifier = ">=1.13" },
+    { name = "easydict", marker = "extra == 'video-depth'", specifier = ">=1.13" },
     { name = "einops", specifier = ">=0.7" },
+    { name = "einops", marker = "extra == 'velodepth'", specifier = ">=0.7" },
+    { name = "einops", marker = "extra == 'video-depth'", specifier = ">=0.7" },
     { name = "evo", marker = "extra == 'da3'", specifier = ">=1.29" },
     { name = "flow-vis", marker = "extra == 'mvtracker'" },
     { name = "ftfy", marker = "extra == 'trackcraft3r'" },
+    { name = "huggingface-hub", marker = "extra == 'cotracker3'", specifier = ">=0.24" },
     { name = "huggingface-hub", marker = "extra == 'da3'", specifier = ">=0.24" },
     { name = "huggingface-hub", marker = "extra == 'depthpro'", specifier = ">=0.24" },
     { name = "huggingface-hub", marker = "extra == 'dvlt'", specifier = ">=0.24" },
@@ -2539,7 +2576,9 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'tapip3d'", specifier = ">=0.24" },
     { name = "huggingface-hub", marker = "extra == 'trackcraft3r'", specifier = ">=0.24" },
     { name = "huggingface-hub", marker = "extra == 'unidepth'", specifier = ">=0.24" },
+    { name = "huggingface-hub", marker = "extra == 'velodepth'", specifier = ">=0.24" },
     { name = "huggingface-hub", marker = "extra == 'vggt'", specifier = ">=0.24" },
+    { name = "huggingface-hub", marker = "extra == 'video-depth'", specifier = ">=0.24" },
     { name = "hydra-core", marker = "extra == 'dvlt'", specifier = ">=1.3" },
     { name = "hydra-core", marker = "extra == 'ma'", specifier = ">=1.3" },
     { name = "hydra-core", marker = "extra == 'tapip3d'", specifier = ">=1.3" },
@@ -2548,6 +2587,7 @@ requires-dist = [
     { name = "jaxtyping", specifier = ">=0.2" },
     { name = "matplotlib", marker = "extra == 'mvtracker'", specifier = ">=3.8" },
     { name = "matplotlib", marker = "extra == 'trackcraft3r'", specifier = ">=3.8" },
+    { name = "matplotlib", marker = "extra == 'velodepth'", specifier = ">=3.8" },
     { name = "mediapy", marker = "extra == 'mvtracker'", specifier = ">=1.2" },
     { name = "mmengine", marker = "extra == 'metric3d'", specifier = ">=0.10" },
     { name = "modelscope", marker = "extra == 'trackcraft3r'" },
@@ -2555,13 +2595,16 @@ requires-dist = [
     { name = "moviepy", marker = "extra == 'da3'", specifier = ">=1.0.3,<2" },
     { name = "moviepy", marker = "extra == 'mvtracker'", specifier = ">=1.0.3,<2" },
     { name = "natsort", marker = "extra == 'ma'", specifier = ">=8" },
+    { name = "numpy", marker = "extra == 'cotracker3'", specifier = ">=1.24" },
     { name = "numpy", marker = "extra == 'mvtracker'", specifier = ">=1.24" },
     { name = "numpy", marker = "extra == 'tapip3d'", specifier = ">=1.24" },
     { name = "numpy", marker = "extra == 'trackcraft3r'", specifier = ">=1.24" },
+    { name = "numpy", marker = "extra == 'velodepth'", specifier = ">=1.24" },
+    { name = "numpy", marker = "extra == 'video-depth'", specifier = ">=1.24" },
     { name = "omegaconf", marker = "extra == 'da3'", specifier = ">=2.3" },
     { name = "omegaconf", marker = "extra == 'dvlt'", specifier = ">=2.3" },
     { name = "ontic-lib", editable = "." },
-    { name = "ontic-nn", extras = ["da3", "ma", "vggt", "pi3x", "dvlt", "moge3"], marker = "extra == 'backbones'", editable = "packages/ontic-nn" },
+    { name = "ontic-nn", extras = ["da3", "ma", "vggt", "pi3x", "dvlt", "moge3", "video-depth", "velodepth"], marker = "extra == 'backbones'", editable = "packages/ontic-nn" },
     { name = "open3d", marker = "python_full_version >= '3.13' and extra == 'dvlt'", specifier = ">=0.20" },
     { name = "open3d", marker = "python_full_version < '3.13' and extra == 'dvlt'", specifier = ">=0.18" },
     { name = "opencv-python", marker = "extra == 'da3'", specifier = ">=4.8" },
@@ -2569,7 +2612,9 @@ requires-dist = [
     { name = "opencv-python", marker = "extra == 'metric3d'", specifier = ">=4.8" },
     { name = "opencv-python", marker = "extra == 'mvtracker'", specifier = ">=4.8" },
     { name = "opencv-python", marker = "extra == 'unidepth'", specifier = ">=4.8" },
+    { name = "opencv-python", marker = "extra == 'velodepth'", specifier = ">=4.8" },
     { name = "opencv-python", marker = "extra == 'vggt'", specifier = ">=4.8" },
+    { name = "opencv-python", marker = "extra == 'video-depth'", specifier = ">=4.8" },
     { name = "opencv-python-headless", marker = "extra == 'ma'", specifier = ">=4.8" },
     { name = "opencv-python-headless", marker = "extra == 'moge3'", specifier = ">=4.8" },
     { name = "orjson", marker = "extra == 'ma'", specifier = ">=3" },
@@ -2580,6 +2625,7 @@ requires-dist = [
     { name = "pillow", marker = "extra == 'dvlt'", specifier = ">=10" },
     { name = "pillow", marker = "extra == 'moge3'", specifier = ">=10" },
     { name = "pillow", marker = "extra == 'trackcraft3r'", specifier = ">=10" },
+    { name = "pillow", marker = "extra == 'velodepth'", specifier = ">=10" },
     { name = "pillow", marker = "extra == 'vggt'", specifier = ">=10" },
     { name = "pillow-heif", marker = "extra == 'depthpro'", specifier = ">=0.15" },
     { name = "pillow-heif", marker = "extra == 'ma'", specifier = ">=0.15" },
@@ -2602,13 +2648,16 @@ requires-dist = [
     { name = "safetensors", marker = "extra == 'pi3x'", specifier = ">=0.4" },
     { name = "safetensors", marker = "extra == 'trackcraft3r'", specifier = ">=0.4" },
     { name = "safetensors", marker = "extra == 'unidepth'", specifier = ">=0.4" },
+    { name = "safetensors", marker = "extra == 'velodepth'", specifier = ">=0.4" },
     { name = "safetensors", marker = "extra == 'vggt'", specifier = ">=0.4" },
     { name = "scikit-learn", marker = "extra == 'ma'", specifier = ">=1.4" },
     { name = "scipy", marker = "extra == 'dvlt'", specifier = ">=1.10" },
     { name = "scipy", marker = "extra == 'moge3'", specifier = ">=1.8" },
     { name = "scipy", marker = "extra == 'trackcraft3r'", specifier = ">=1.10" },
     { name = "scipy", marker = "extra == 'unidepth'", specifier = ">=1.10" },
+    { name = "scipy", marker = "extra == 'velodepth'", specifier = ">=1.10" },
     { name = "sentencepiece", marker = "extra == 'trackcraft3r'" },
+    { name = "setuptools", marker = "extra == 'velodepth'", specifier = "<81" },
     { name = "spconv-cu120", marker = "python_full_version < '3.12' and extra == 'spconv'", specifier = ">=2.3" },
     { name = "termcolor", marker = "extra == 'ma'", specifier = ">=2" },
     { name = "timm", marker = "extra == 'depthpro'", specifier = ">=0.9" },
@@ -2616,6 +2665,7 @@ requires-dist = [
     { name = "timm", marker = "extra == 'metric3d'", specifier = ">=0.9" },
     { name = "timm", marker = "extra == 'timm'", specifier = ">=0.9" },
     { name = "timm", marker = "extra == 'unidepth'", specifier = ">=0.9" },
+    { name = "timm", marker = "extra == 'velodepth'", specifier = ">=0.9" },
     { name = "torch", specifier = ">=2.4" },
     { name = "torchvision", marker = "extra == 'da3'", specifier = ">=0.19" },
     { name = "torchvision", marker = "extra == 'ma'", specifier = ">=0.19" },
@@ -2624,15 +2674,19 @@ requires-dist = [
     { name = "torchvision", marker = "extra == 'tapip3d'", specifier = ">=0.19" },
     { name = "torchvision", marker = "extra == 'trackcraft3r'", specifier = ">=0.19" },
     { name = "torchvision", marker = "extra == 'unidepth'", specifier = ">=0.19" },
+    { name = "torchvision", marker = "extra == 'velodepth'", specifier = ">=0.19" },
+    { name = "torchvision", marker = "extra == 'video-depth'", specifier = ">=0.19" },
     { name = "tqdm", marker = "extra == 'da3'", specifier = ">=4.60" },
     { name = "tqdm", marker = "extra == 'mvtracker'", specifier = ">=4.60" },
+    { name = "tqdm", marker = "extra == 'video-depth'", specifier = ">=4.60" },
     { name = "transformers", marker = "extra == 'trackcraft3r'", specifier = ">=4.57,<5" },
     { name = "trimesh", marker = "extra == 'da3'", specifier = ">=4" },
     { name = "trimesh", marker = "extra == 'moge3'", specifier = ">=4" },
     { name = "triton", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'moge3'", specifier = ">=3.2" },
+    { name = "wandb", marker = "extra == 'velodepth'", specifier = ">=0.17" },
     { name = "xformers", marker = "extra == 'unidepth'" },
 ]
-provides-extras = ["ptv3", "spconv", "timm", "backbones", "da3", "ma", "vggt", "pi3x", "dvlt", "moge3", "depthpro", "metric3d", "unidepth", "mvtracker", "tapip3d", "trackcraft3r"]
+provides-extras = ["ptv3", "spconv", "timm", "backbones", "video-depth", "velodepth", "da3", "ma", "vggt", "pi3x", "dvlt", "moge3", "depthpro", "metric3d", "unidepth", "cotracker3", "mvtracker", "tapip3d", "trackcraft3r"]
 
 [[package]]
 name = "ontic-viz"
@@ -2668,7 +2722,7 @@ requires-dist = [
     { name = "rerun-sdk", marker = "extra == 'rerun'", specifier = ">=0.38,<0.39" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "torch", specifier = ">=2.4" },
-    { name = "viser", specifier = ">=0.2" },
+    { name = "viser", specifier = ">=1.1" },
 ]
 provides-extras = ["rerun", "robot"]
 
@@ -3992,11 +4046,11 @@ wheels = [
 
 [[package]]
 name = "setuptools"
-version = "81.0.0"
+version = "80.10.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0d/1c/73e719955c59b8e424d015ab450f51c0af856ae46ea2da83eba51cc88de1/setuptools-81.0.0.tar.gz", hash = "sha256:487b53915f52501f0a79ccfd0c02c165ffe06631443a886740b91af4b7a5845a", size = 1198299 }
+sdist = { url = "https://files.pythonhosted.org/packages/76/95/faf61eb8363f26aa7e1d762267a8d602a1b26d4f3a1e758e92cb3cb8b054/setuptools-80.10.2.tar.gz", hash = "sha256:8b0e9d10c784bf7d262c4e5ec5d4ec94127ce206e8738f29a437945fbc219b70", size = 1200343 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e1/e3/c164c88b2e5ce7b24d667b9bd83589cf4f3520d97cad01534cd3c4f55fdb/setuptools-81.0.0-py3-none-any.whl", hash = "sha256:fdd925d5c5d9f62e4b74b30d6dd7828ce236fd6ed998a08d81de62ce5a6310d6", size = 1062021 },
+    { url = "https://files.pythonhosted.org/packages/94/b8/f1f62a5e3c0ad2ff1d189590bfa4c46b4f3b6e49cef6f26c6ee4e575394d/setuptools-80.10.2-py3-none-any.whl", hash = "sha256:95b30ddfb717250edb492926c92b5221f7ef3fbcc2b07579bcd4a27da21d0173", size = 1064234 },
 ]
 
 [[package]]

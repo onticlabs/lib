@@ -4,10 +4,14 @@
 `ontic_nn.wrappers` (geometry backbones). Importing the registry does not import
 upstream research repositories, load weights, or access the network.
 
-The first adapters are MVTracker, TAPIP3D, and TrackCraft3R. They use RGB video
+The adapters are MVTracker, TAPIP3D, TrackCraft3R, and CoTracker3 with depth lifting.
+They use RGB video
 and depth/cameras to follow persistent physical points. They do not accept an
 uncoloured XYZ-only scan sequence as a substitute for RGB observations. The
 [research comparison](point_tracking_research.md) explains the selection.
+
+For this host's downloaded weights and prefilled viewer paths, see
+[local tracker checkpoints](tracker_checkpoints.md).
 
 ## Shared interface
 
@@ -38,6 +42,8 @@ seed a query.
 
 `valid` and `visibility` have different meanings: an occluded point may have a
 valid predicted position. Missing visibility is unknown, not a score of zero.
+CoTracker3 only provides 2D predictions, so its occluded samples have no valid
+3D surface estimate and are marked invalid even if depth exists at that pixel.
 Native scores are not assumed to be calibrated across trackers. No adapter
 manufactures per-view visibility from an aggregate score.
 
@@ -140,6 +146,7 @@ at import time. `allow_download=True` permits downloads during `build()`;
 | --- | --- | --- |
 | `mvtracker` | Synchronized multi-view RGB-D; aggregate any-view visibility | [`ceea8ad`](https://github.com/ethz-vlg/mvtracker/tree/ceea8ad2af77ed9b44148ef8e9eeba4ea3c3f072) |
 | `tapip3d` | Monocular RGB-D; query-view visibility; optional reverse pass | [`4cb7e69`](https://github.com/zbw001/TAPIP3D/tree/4cb7e69a1687f67d56ec3e506768f51f2c581b46) |
+| `cotracker3` | Independent RGB tracks per source camera, lifted with supplied depth; query-view visibility | [`82e02e8`](https://github.com/facebookresearch/co-tracker/tree/82e02e8029753ad4ef13cf06be7f4fc5facdda4d) |
 | `trackcraft3r` | Monocular dense reference field; queries at `t=0`; constant intrinsics | [`21e8fca`](https://github.com/cvlab-kaist/TrackCraft3r/tree/21e8fcaf4b6375b3044cead210d5808e1d81760b) |
 
 These revisions describe the API targeted by the adapters, not automatic
@@ -190,6 +197,41 @@ after frame zero. Short clips are padded for the upstream temporal window and
 trimmed on output. Its inference outputs are detached by upstream; this wrapper
 is not a training interface.
 
+**CoTracker3 + depth.** Install `ontic-nn[cotracker3]` and clone CoTracker at the
+revision above, which is the submodule pinned by [PointWorld's data branch](https://github.com/NVlabs/PointWorld/tree/3872ec6ee73146aa671192ef79b5dfbedc0246e3).
+PointWorld's `real/flow_2d.py` uses `CoTrackerPredictor(offline=True, v2=False,
+window_len=16)` with `facebook/cotracker3/scaled_online.pth`. This adapter follows
+that combination, despite the checkpoint's `online` name; it is a full-clip API.
+
+```python
+from ontic_nn.trackers import CoTracker3Config
+
+tracker = CoTracker3Config(
+    repo_path="/research/co-tracker",  # or PointWorld with its submodule initialized
+    checkpoint_path="/models/scaled_online.pth",
+    allow_download=False,
+).build().to("cuda")
+result = tracker(images, queries, geometry=geometry)
+```
+
+`ONTIC_COTRACKER3_REPO` can replace `repo_path`; without either, the installed
+`cotracker` package is used. No extra CUDA extension is needed. The native
+predictor grid is 384 × 512 (unaffected by `long_side`); depth stays at its supplied
+resolution. `bidirectional=True` supports queries after frame zero, and
+`query_chunk_size=8192` bounds the number of explicit queries per predictor call.
+Multi-camera inputs require query `source_view`/`source_uv`: each group is tracked
+independently and returned in the original ID order, without cross-view fusion.
+
+Like PointWorld, the adapter rounds tracks to depth pixels and unprojects the
+sampled surface with calibrated cameras. It uses Ontic's pixel-center convention
+when RGB/depth resolutions differ and supports time-varying camera poses.
+Invalid depth, outside-image positions and occluded tracks yield `valid=False`
+and NaN XYZ. Visibility contains the upstream binary decision (native threshold
+0.9), not a calibrated probability. This excludes sampling an occluder's surface
+as the hidden point's trajectory. Depth quality directly affects the lifted 3D
+motion; no trajectory smoothing, depth estimation or cross-view optimization is
+performed. The viewer's displayed-point filters and query boxes select the seeds.
+
 **TrackCraft3R.** Install `ontic-nn[trackcraft3r]` and use the TrackCraft3R
 checkout's `diffsynth` fork. It needs both the released tracking checkpoint
 (`trackcraft3r/checkpoint/model.safetensors`) and the Wan2.1 base model, including
@@ -233,7 +275,7 @@ upstream dependencies, matching model assets, and suitable hardware.
 ## Interactive and headless visualization
 
 The [Geometry & motion viewer](../packages/ontic-viz/README.md#workflow) connects
-all three adapters to the depth backbones. Start with
+all four adapters to the depth backbones. Start with
 `uv run ontic-backbone-viewer --demo --device cpu` for cached playback of a known
 synthetic motion sequence. Use **1. Dataset** for data, cameras and clip bounds,
 **2. Depth model** for backbone geometry, **3. Tracking** for tracker and queries,
@@ -257,4 +299,6 @@ for the exact settings, observed diagnostics, saved recordings and reproduction
 commands. TAPIP3D has also completed real pretrained inference on the HOCAP sensor
 clip (one camera, 12 frames, 128 queries), with finite trajectories throughout.
 TrackCraft3R remains covered by adapter contract tests without a pretrained run.
+CoTracker3 completed a real HOCAP sensor-depth run with three cameras, 12 frames
+and 128 displayed-point queries; invalid depth and occlusion are explicitly masked.
 These checks establish runtime integration, not tracking accuracy.

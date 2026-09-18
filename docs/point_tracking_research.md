@@ -1,8 +1,10 @@
 # 3D point tracking: candidates and proposed Ontic interface
 
-Research date: 2026-09-17. The first three adapters are now implemented under
-`ontic_nn.trackers`; see the [API and setup](point_tracking.md). No local pretrained
-model benchmark has been performed. The working assumption is synchronized
+Research date: 2026-09-17; integration update: 2026-09-18. The first three adapters
+and a PointWorld-style CoTracker3 depth-lifting baseline are implemented under
+`ontic_nn.trackers`; see the [API and setup](point_tracking.md). Local pretrained
+[runtime trials](tracking_dataset_trials.md) cover MVTracker, TAPIP3D and CoTracker3;
+ground-truth tracking accuracy has not been benchmarked. The working assumption is synchronized
 RGB video with one or more views, supplied or estimated geometry, and offline
 inference for the first integration. Point-cloud-only input is covered separately.
 
@@ -294,6 +296,6 @@ depth source, camera source and alignment when comparing trackers.
 
 The first implementation supplies the common contract, geometry/query adapters,
 and MVTracker, TAPIP3D and TrackCraft3R wrappers. Viewer trajectory playback and a
-lifted CoTracker3 diagnostic baseline remain follow-up integration work. Add other
+lifted CoTracker3 diagnostic baseline are also integrated. Add other
 dense and joint models once the same geometry and query identities can be
 compared reliably.

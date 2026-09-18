@@ -9,7 +9,7 @@ dependencies = [
     "ontic-data",
     "torch>=2.4",
     "numpy>=1.24",
-    "viser>=0.2",
+    "viser>=1.1",  # GuiApi.add_panel and current playback controls
     "matplotlib>=3.8",
     "scipy>=1.11",
 ]

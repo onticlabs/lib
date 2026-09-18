@@ -172,13 +172,16 @@ g2.covariance().shape                                      # torch.Size([100, 3,
 
 ## trackers
 
-Pretrained 3D point tracking in `ontic_nn.trackers`: `MVTracker`, `TAPIP3D`, and
-`TrackCraft3R`, with `TRACKERS` and per-model `*Config.build()` constructors.
+Pretrained 3D point tracking in `ontic_nn.trackers`: `MVTracker`, `TAPIP3D`,
+`TrackCraft3R`, and `CoTracker3` with depth lifting, with `TRACKERS` and per-model
+`*Config.build()` constructors.
 The common call is `tracker(images, queries, geometry=geometry)` for RGB
 `[B,T,V,3,H,W]`, camera-z depth, normalized intrinsics and camera-to-world poses.
 It returns persistent IDs, world trajectories `[B,T,N,3]`, validity and native
 visibility scores. Geometry must already share one world frame and scale across
 time. Only MVTracker performs native multi-view correspondence reasoning.
+CoTracker3 follows PointWorld's per-camera RGB tracking and supplied-depth lifting;
+it accepts multiple views independently and excludes occluded/invalid 3D samples.
 
 See [Point tracking](point_tracking.md) for the full contract, backbone adapter,
 usage, upstream installation requirements and native restrictions. Importing

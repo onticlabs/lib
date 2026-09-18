@@ -242,7 +242,7 @@ def import_research_module(module: str, *, extra: str, repo_url: str, what: str)
     except ImportError as e:
         package = module.split(".")[0]
         repair = f"install ontic-nn[{extra}] and that repository"
-        if extra in {"da3", "ma", "vggt", "pi3x", "dvlt", "moge3"}:
+        if extra in {"da3", "ma", "vggt", "pi3x", "dvlt", "moge3", "video-depth", "velodepth"}:
             repair = (
                 "run `uv run --no-sync python scripts/install_backbones.py` from the "
                 f"ontic-lib workspace (ontic-nn[{extra}] alone installs support dependencies only)"
