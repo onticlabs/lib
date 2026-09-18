@@ -130,15 +130,23 @@ building. These are offline clip adapters; no causal stream state is exposed.
 
 ## Upstream setup and limits
 
-Install only the extras you need. From this workspace, for example:
+The unified workspace installer installs all backbones and trackers, including
+pinned research sources, their Python dependencies and TAPIP3D's CUDA extension:
 
 ```bash
-uv sync --package ontic-nn --extra mvtracker
+uv run --no-sync python scripts/install_models.py
 ```
 
-The extras provide Python dependencies, not research source, pretrained weights,
-or CUDA extensions. Use a PyTorch/CUDA combination supported by your driver and
-build extensions against that same environment. No model files are downloaded
+Use `--group trackers` to install trackers alone and `--check` to verify imports.
+After installation, the adapters discover the pinned sources automatically;
+explicit checkout paths remain supported. See
+[model installation](../packages/ontic-nn/README.md#model-installation) for
+CUDA/compiler prerequisites and the explicit partial-install option.
+
+For manual setup, individual `ontic-nn[mvtracker]`, `[tapip3d]`, `[cotracker3]`
+and `[trackcraft3r]` extras provide Python dependencies only. Use a PyTorch/CUDA
+combination supported by your driver and build extensions against that same
+environment. No model files are downloaded
 at import time. `allow_download=True` permits downloads during `build()`;
 `allow_download=False` requires local or already cached assets.
 
@@ -149,9 +157,9 @@ at import time. `allow_download=True` permits downloads during `build()`;
 | `cotracker3` | Independent RGB tracks per source camera, lifted with supplied depth; query-view visibility | [`82e02e8`](https://github.com/facebookresearch/co-tracker/tree/82e02e8029753ad4ef13cf06be7f4fc5facdda4d) |
 | `trackcraft3r` | Monocular dense reference field; queries at `t=0`; constant intrinsics | [`21e8fca`](https://github.com/cvlab-kaist/TrackCraft3r/tree/21e8fcaf4b6375b3044cead210d5808e1d81760b) |
 
-These revisions describe the API targeted by the adapters, not automatic
-verification of an arbitrary installed checkout. Pin your upstream checkout
-when reproducing results. The wrappers loop over batch items because the native
+The unified installer pins these revisions in `scripts/tracker_sources.json`.
+Manually supplied checkouts are not automatically verified against them. The
+wrappers loop over batch items because the native
 predictors process one sequence at a time.
 
 **MVTracker.** Install `ontic-nn[mvtracker]` and put the upstream checkout on
@@ -169,7 +177,7 @@ With the default 12-frame temporal window, supply at least seven frames.
 it to `False` leaves pre-query estimates invalid. With `grid_size=0`, clips must
 also start tracking early enough for the native window loop to run.
 
-**TAPIP3D.** Install `ontic-nn[tapip3d]`, clone the repository, and build its
+**TAPIP3D (manual setup).** Install `ontic-nn[tapip3d]`, clone the repository, and build its
 `third_party/pointops2` CUDA extension following the upstream installation
 instructions. Supply `repo_path` (or
 `ONTIC_TAPIP3D_REPO`) so the adapter can locate its generic `models`, `datasets`
@@ -276,7 +284,7 @@ upstream dependencies, matching model assets, and suitable hardware.
 
 The [Geometry & motion viewer](../packages/ontic-viz/README.md#workflow) connects
 all four adapters to the depth backbones. Start with
-`uv run ontic-backbone-viewer --demo --device cpu` for cached playback of a known
+`uv run --no-sync ontic-backbone-viewer --demo --device cpu` for cached playback of a known
 synthetic motion sequence. Use **1. Dataset** for data, cameras and clip bounds,
 **2. Depth model** for backbone geometry, **3. Tracking** for tracker and queries,
 and **4. Display** for filters, trails, occlusions and cloud appearance.

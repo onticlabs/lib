@@ -16,16 +16,18 @@ rest under `packages/`; all at version 0.5.0):
 - **`ontic-nn`** (`packages/ontic-nn`) — neural backbones built on `ontic-lib`:
   PTv3 over `PointBatch`, DINOv2, DPT heads, plain point transformer, shared
   transformer layers, and the pretrained-backbone (`wrappers`, 7 keys) and
-  metric-depth (`metric_depth`, 4 keys) registries. Overview: [`docs/ontic_nn.md`](docs/ontic_nn.md);
+  metric-depth (`metric_depth`, 4 keys), temporal video-depth and point-tracker
+  registries. Overview: [`docs/ontic_nn.md`](docs/ontic_nn.md);
   install notes: [`packages/ontic-nn/README.md`](packages/ontic-nn/README.md).
 - **`ontic-data`** (`packages/ontic-data`) — dataset loaders for temporal
   multi-view scenes: one example schema, `TemporalSceneDataset`, view sampling,
   collate, and the `DATASETS` registry (genesis, hocap, taco, dextris,
-  physinone, synthrobot). Overview: [`docs/ontic_data.md`](docs/ontic_data.md);
+  physinone, synthrobot, robot-dextris). Overview: [`docs/ontic_data.md`](docs/ontic_data.md);
   install notes: [`packages/ontic-data/README.md`](packages/ontic-data/README.md).
 - **`ontic-viz`** (`packages/ontic-viz`) — interactive tools: the
   `ontic-backbone-viewer` (viser) that runs any registered backbone or metric
-  model on any registered dataset. Overview: [`docs/ontic_viz.md`](docs/ontic_viz.md);
+  model on any registered dataset, with video-depth preparation, point tracking,
+  and cached clip playback. Overview: [`docs/ontic_viz.md`](docs/ontic_viz.md);
   GUI walkthrough: [`packages/ontic-viz/README.md`](packages/ontic-viz/README.md).
 
 The sub-packages are workspace members here; consumers install them as git
@@ -35,6 +37,44 @@ dependencies with a `subdirectory`:
 [tool.uv.sources]
 ontic-nn = { git = "<repo url>", subdirectory = "packages/ontic-nn" }
 ```
+
+## Install the viewer and models
+
+From the repository root, in a Linux Python 3.12+ virtualenv containing your
+chosen PyTorch, torchvision and NumPy:
+
+```bash
+uv run --no-sync python scripts/install_models.py
+```
+
+This installs the four workspace packages, dataset backends, viewer extras,
+pinned backbone/video-depth sources and all four trackers: **MVTracker, TAPIP3D,
+CoTracker3 and TrackCraft3R**. It builds TAPIP3D's `pointops2` extension against
+the invoking environment and checks upstream imports in separate processes.
+Installed PyTorch, CUDA runtime, Triton and NumPy versions are preserved.
+
+You need `git`, `uv`, a C++ compiler and a CUDA toolkit (`nvcc`) compatible with
+your PyTorch build. Set `CUDA_HOME` if the toolkit is outside PATH. Checkpoints,
+datasets, system drivers, FFmpeg and the private robotics checkout are separate;
+installation never downloads weights. Downloads are opt-in in the viewer;
+Python API callers should set `allow_download=False` for offline operation.
+
+```bash
+# Verify an existing setup without installing or downloading weights.
+uv run --no-sync python scripts/install_models.py --check
+
+# Optional: inspect dependency resolution and source pins without installation.
+uv run --no-sync python scripts/install_models.py --dry-run
+
+# Start the viewer's synthetic demo; no checkpoints needed.
+uv run --no-sync ontic-backbone-viewer --demo --device cpu --host 127.0.0.1
+```
+
+For a machine without a CUDA toolkit, `--skip-cuda-build` makes a **partial**
+installation: TAPIP3D's extension and readiness check are skipped. You can also
+select `--group backbones` or `--group trackers`. See
+[model installation](packages/ontic-nn/README.md#model-installation) for source
+locations, weights, CPU limitations, and preserving a custom runtime.
 
 ## Optional dependencies
 

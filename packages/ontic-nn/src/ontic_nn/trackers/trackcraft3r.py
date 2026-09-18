@@ -68,6 +68,7 @@ from .common import (
     validate_tracker_inputs,
 )
 from .registry import register_tracker
+from .sources import installed_repo
 
 TRACKCRAFT3R_REPO_URL = "https://github.com/cvlab-kaist/TrackCraft3r"
 TRACKCRAFT3R_REVISION = "21e8fcaf4b6375b3044cead210d5808e1d81760b"  # main, 2026-05-14
@@ -108,7 +109,8 @@ class TrackCraft3RConfig(TrackerConfig):
     uses ``MODELSCOPE_CACHE=./checkpoints/wan_models``). ``allow_download=False`` sets both
     HuggingFace and ModelScope offline flags, requiring all model assets to be cached.
 
-    ``repo_path`` is a TrackCraft3R checkout to import from when it is not already installed.
+    ``repo_path`` overrides the workspace installer's registered TrackCraft3R checkout.
+    Without either, the upstream packages must already be importable.
     ``long_side`` is inherited and unused: the grid is fixed by ``height`` / ``width``.
     """
 
@@ -484,7 +486,8 @@ def _environment(values: dict[str, str]) -> Iterator[None]:
 
 def load_predictor(cfg: TrackCraft3RConfig) -> Any:
     """Import upstream, resolve the trained weights and construct ``WanSceneFlowPredictor``."""
-    repo_path = Path(cfg.repo_path).expanduser().resolve() if cfg.repo_path else None
+    raw = cfg.repo_path or installed_repo("trackcraft3r")
+    repo_path = Path(raw).expanduser().resolve() if raw else None
     if repo_path is not None:
         marker = repo_path / "evaluation" / _PACKAGE_MARKERS["evaluation"]
         if not marker.is_file():

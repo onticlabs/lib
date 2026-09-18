@@ -74,6 +74,7 @@ unidepth = [  # https://github.com/lpiccinelli-eth/UniDepth  (package `unidepth`
 
 # Point trackers (ontic_nn.trackers). Install the research source separately;
 # CUDA extensions must match the local torch/CUDA and are not resolved here.
+trackers = ["ontic-nn[mvtracker,tapip3d,cotracker3,trackcraft3r]"]
 cotracker3 = [  # https://github.com/facebookresearch/co-tracker; PointWorld's pinned predictor
     "huggingface_hub>=0.24", "numpy>=1.24",
 ]
@@ -81,10 +82,12 @@ mvtracker = [  # https://github.com/ethz-vlg/mvtracker (package `mvtracker`)
     "huggingface_hub>=0.24", "numpy>=1.24", "torchvision>=0.19", "easydict>=1.13",
     "pandas>=2", "pypng", "opencv-python>=4.8", "matplotlib>=3.8", "flow-vis",
     "moviepy>=1.0.3,<2", "tqdm>=4.60", "mediapy>=1.2", "rerun-sdk>=0.21",
+    "kornia>=0.7",  # imported by upstream's eagerly loaded dataset modules
 ]
 tapip3d = [  # https://github.com/zbw001/TAPIP3D; plus its pointops2 CUDA build
     "huggingface_hub>=0.24", "numpy>=1.24", "hydra-core>=1.3", "python-box>=7",
     "rich>=13", "torchvision>=0.19",
+    "setuptools<81", "wheel>=0.43", "ninja>=1.11",  # extension build in the invoking environment
 ]
 trackcraft3r = [  # https://github.com/cvlab-kaist/TrackCraft3r (its own `diffsynth` fork)
     "huggingface_hub>=0.24", "numpy>=1.24", "pillow>=10", "safetensors>=0.4",

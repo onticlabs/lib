@@ -70,6 +70,7 @@ from .common import (
     validate_tracker_inputs,
 )
 from .registry import register_tracker
+from .sources import installed_repo
 
 TAPIP3D_REPO_URL = "https://github.com/zbw001/TAPIP3D"
 TAPIP3D_REVISION = "4cb7e69a1687f67d56ec3e506768f51f2c581b46"
@@ -97,8 +98,9 @@ _INSTALL_HINT = (
 class TAPIP3DConfig(TrackerConfig):
     """TAPIP3D with externally supplied geometry.
 
-    ``repo_path`` is the upstream checkout (falls back to ``$ONTIC_TAPIP3D_REPO``); it is only
-    read by :meth:`build`, never on import, and it is put on ``sys.path`` for the duration of
+    ``repo_path`` is the upstream checkout (falls back to ``$ONTIC_TAPIP3D_REPO``, then the
+    workspace installer's source index). It is only read by :meth:`build`, never on import,
+    and it is put on ``sys.path`` for the duration of
     that import only. ``checkpoint_path`` wins over ``model_dir`` / ``checkpoint_file``, the
     released ``zbww/tapip3d`` hub weights.
 
@@ -483,7 +485,7 @@ def load_tapip3d(cfg: TAPIP3DConfig) -> Tuple[nn.Module, str]:
 
 
 def _resolve_repo_path(cfg: TAPIP3DConfig) -> Path:
-    raw = cfg.repo_path or os.environ.get(REPO_PATH_ENV)
+    raw = cfg.repo_path or os.environ.get(REPO_PATH_ENV) or installed_repo("tapip3d")
     if not raw:
         raise ImportError(
             f"TAPIP3D is not an installable package: {_INSTALL_HINT}. "

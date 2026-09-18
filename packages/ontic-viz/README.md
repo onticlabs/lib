@@ -8,26 +8,29 @@ existing depth backbones. The command remains `ontic-backbone-viewer`.
 
 ## Running
 
-Install all backbone sources and support dependencies into the existing
-environment, preserving its PyTorch/CUDA versions:
+Install the viewer, dataset backends, backbones, video-depth models and all four
+trackers into the existing environment, preserving its PyTorch/CUDA versions:
 
 ```bash
-uv run --no-sync python scripts/install_backbones.py
+uv run --no-sync python scripts/install_models.py
 ```
 
-See [backbone setup and verification](../ontic-nn/README.md#geometry-backbone-setup)
-for prerequisites and import checks.
+See [model installation and verification](../ontic-nn/README.md#model-installation)
+for prerequisites and import checks. TAPIP3D needs a matching CUDA toolkit and
+compiler; `--skip-cuda-build` explicitly leaves that tracker incomplete.
+Checkpoint downloads remain opt-in. Installed tracker sources are discovered
+automatically, so the checkout fields can stay empty.
 
 ```bash
 # Start with a moving RGB-D scene and known trajectories; no model weights needed.
-uv run ontic-backbone-viewer --demo --device cpu --host 127.0.0.1
+uv run --no-sync ontic-backbone-viewer --demo --device cpu --host 127.0.0.1
 
-uv run ontic-backbone-viewer --port 8080 --device cuda
+uv run --no-sync ontic-backbone-viewer --port 8080 --device cuda
 # from your laptop:
 ssh -L 8080:localhost:8080 <host>        # then open http://localhost:8080
 
 # ...or get a public share.viser.studio URL to open from any device (no SSH):
-uv run ontic-backbone-viewer --share
+uv run --no-sync ontic-backbone-viewer --share
 ```
 
 viser walks up from the requested port when it is taken; trust the printed
@@ -308,8 +311,9 @@ download settings, including any edits made during the session:
 ```
 
 The older singular `"tracker"` entry still applies to MVTracker (or its explicit
-`"name"`), without sharing those paths with other trackers. TAPIP3D needs its own
-checkout and compiled `pointops2_cuda` extension; see [tracker setup](../../docs/point_tracking.md).
+`"name"`), without sharing those paths with other trackers. Omit `repo_path` to
+use the unified installer's source registrations. TAPIP3D also needs its compiled
+`pointops2_cuda` extension; see [tracker setup](../../docs/point_tracking.md).
 
 The headless API is `save_recording(run_or_clip, path)` / `load_recording(path)`
 in `ontic_viz.backbone_viewer.recording`. Archives use NumPy arrays and JSON,

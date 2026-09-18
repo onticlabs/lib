@@ -1,0 +1,26 @@
+[
+  {
+    "name": "mvtracker",
+    "url": "https://github.com/ethz-vlg/mvtracker.git",
+    "revision": "ceea8ad2af77ed9b44148ef8e9eeba4ea3c3f072",
+    "path": "."
+  },
+  {
+    "name": "tapip3d",
+    "url": "https://github.com/zbw001/TAPIP3D.git",
+    "revision": "4cb7e69a1687f67d56ec3e506768f51f2c581b46",
+    "path": "."
+  },
+  {
+    "name": "cotracker3",
+    "url": "https://github.com/facebookresearch/co-tracker.git",
+    "revision": "82e02e8029753ad4ef13cf06be7f4fc5facdda4d",
+    "path": "."
+  },
+  {
+    "name": "trackcraft3r",
+    "url": "https://github.com/cvlab-kaist/TrackCraft3r.git",
+    "revision": "21e8fcaf4b6375b3044cead210d5808e1d81760b",
+    "path": "."
+  }
+]

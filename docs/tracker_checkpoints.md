@@ -1,5 +1,11 @@
 # Local tracker checkpoints
 
+For a portable code/dependency installation, use
+`uv run --no-sync python scripts/install_models.py` from the workspace root;
+see [model installation](../packages/ontic-nn/README.md#model-installation).
+This page records optional checkpoint locations on AL3, not prerequisites or
+default paths for other machines. The installer does not download weights.
+
 The AL3 viewer uses released checkpoints for all four tracker adapters. Persistent
 copies live under `/mnt/fast/mzhobro/ontic_tracker_checkpoints` (about 35.8 GB total).
 Large model files are outside Git. `manifest.json` in that directory records file

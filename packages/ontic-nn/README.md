@@ -42,6 +42,8 @@ dependency group.
 | `ontic-nn[spconv]` | `spconv-cu120` (Python < 3.12 only) | `conv_impl="spconv"` for the PTv3 stem / CPE |
 | `ontic-nn[timm]` | `timm` | Alternative DINOv2 pretrained-weight loading, if used |
 | `ontic-nn[backbones]` | Six image backbone dependency sets plus video depth | Use the installer below to include pinned research sources |
+| `ontic-nn[trackers]` | All four tracker dependency sets | Use the unified installer for pinned sources and TAPIP3D's CUDA build |
+| `ontic-nn[mvtracker,tapip3d,cotracker3,trackcraft3r]` | Individual tracker extras | Select only the adapters needed for an existing research environment |
 | `ontic-nn[video-depth]` | Video Depth Anything inference dependencies | Temporal metric depth, Small / Base / Large; also included in `backbones` |
 | `ontic-nn[velodepth]` | VeloDepth inference dependencies | Metric video geometry propagation; also included in `backbones` |
 
@@ -49,6 +51,60 @@ dependency group.
 it is installed manually, not as an extra. `rope_impl="cuda"` and
 `knn_query(impl="cuda")` use the CUDA extensions vendored under `ext/` at the
 repository root (`./scripts/install_cuda_ext.sh`).
+
+### Model installation
+
+Install backbones, video-depth models, all four trackers, dataset backends and
+the viewer with one command from the workspace root:
+
+```bash
+uv run --no-sync python scripts/install_models.py
+```
+
+The command uses the invoking Linux Python 3.12+ virtualenv, with `git`, `uv`,
+PyTorch, torchvision and NumPy already installed. It preserves the selected ML
+stack, resolves support libraries from `uv.lock`, and builds TAPIP3D's required
+`pointops2` extension with `--no-deps --no-build-isolation`. This requires a C++
+compiler and a CUDA toolkit with the same major version as PyTorch's CUDA runtime;
+matching the full toolkit version is recommended. Set `CUDA_HOME` as needed.
+Builds use at most two jobs by default; override `MAX_JOBS` for your machine.
+A build host without a usable GPU also needs `TORCH_CUDA_ARCH_LIST` set to the
+target GPU architecture.
+
+```bash
+uv run --no-sync python scripts/install_models.py --check          # imports only
+uv run --no-sync python scripts/install_models.py --dry-run        # no installation
+uv run --no-sync python scripts/install_models.py --group trackers # trackers only
+uv run --no-sync python scripts/install_models.py --group backbones
+```
+
+`--skip-cuda-build` explicitly permits a partial setup without TAPIP3D's extension
+or import check. Rerun without it on a configured CUDA build machine to complete
+the setup. MoGe-3's import is also reported as skipped when CUDA is unusable.
+Import checks run in separate processes and never construct pretrained models.
+An import failure makes the installer exit nonzero; successful imports alone do
+not verify checkpoints or inference quality.
+
+Tracker revisions are pinned in
+[`scripts/tracker_sources.json`](../../scripts/tracker_sources.json).
+Checkouts live under `<virtualenv>/share/ontic-trackers/`; backbones live under
+`<virtualenv>/share/ontic-backbones/`. MVTracker and CoTracker register through
+`ontic_trackers.pth`. TAPIP3D and TrackCraft3R are discovered through the local
+`share/ontic-trackers/sources.json` index and loaded by the adapters' guarded
+imports, so their generic package names are not added to every Python process.
+Explicit `repo_path` settings and TAPIP3D's environment override take precedence.
+No manual tracker checkout paths are needed after this installer succeeds.
+
+The installer fetches code and support dependencies, **not checkpoints**. Supply
+local weights or enable downloads in the viewer. Python backbone/tracker configs
+default to allowing downloads at `build()` time; set `allow_download=False` for
+offline operation. Video-depth configs default to downloads disabled.
+VGGT-Omega requires Hugging Face access; TrackCraft3R additionally requires the
+Wan base model and tokenizer assets. See [tracker setup and weights](../../docs/point_tracking.md#upstream-setup-and-limits).
+Datasets, FFmpeg/system drivers and the private robot-model checkout are not
+installed. Use `uv run --no-sync` when launching in a custom ML environment;
+plain `uv run`/`uv sync` may synchronize it back to workspace dependency selections.
+Restart Python or the viewer after installing sources.
 
 ### Geometry backbone setup
 
@@ -99,12 +155,13 @@ The default check reports MoGe-3 as **skipped** without usable CUDA because
 FlexGEMM queries GPU properties during import. Missing dependencies return a
 nonzero exit code. These checks do not validate pretrained inference or download
 model weights.
-Normal viewer inference downloads missing weights; VGGT-Omega requires Hugging
-Face checkpoint access. CUDA 13 inference also requires a compatible host driver.
+Viewer downloads are opt-in; VGGT-Omega requires Hugging Face checkpoint access.
+CUDA 13 inference also requires a compatible host driver.
 
 Individual extras such as `ontic-nn[vggt]` still contain support dependencies
-only; use the installer to include the research sources. Metric-depth models
-and point trackers have separate setup requirements.
+only; use the installer to include the research sources. The unified installer
+above also covers trackers. Additional metric-depth model families retain their
+individual extras and upstream setup requirements.
 
 ## Video depth
 

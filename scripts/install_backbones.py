@@ -108,11 +108,13 @@ def checkout(source: dict[str, str], cache: Path) -> Path:
     return import_path.resolve()
 
 
-def register_sources(paths: list[Path], site_packages: Path) -> None:
+def register_sources(
+    paths: list[Path], site_packages: Path, *, filename: str = "ontic_backbones.pth"
+) -> None:
     """Prioritize the pinned sources over previously pip-installed research packages."""
-    pth = site_packages / "ontic_backbones.pth"
+    pth = site_packages / filename
     content = (
-        "# Managed by scripts/install_backbones.py; remove to disable these research sources.\n"
+        "# Managed by Ontic model installers; remove to disable these research sources.\n"
         f"import sys; sys.path[:0] = {list(map(str, paths))!r}\n"
     )
     temporary = pth.with_suffix(".pth.tmp")
@@ -120,7 +122,9 @@ def register_sources(paths: list[Path], site_packages: Path) -> None:
     temporary.replace(pth)
 
 
-def locked_constraints(uv: str) -> list[str]:
+def locked_constraints(
+    uv: str, *, package: str = "ontic-nn", extras: tuple[str, ...] = ("backbones",)
+) -> list[str]:
     """Use the workspace lock for support libraries, retaining the caller's ML stack."""
     exported = subprocess.check_output(
         [
@@ -128,9 +132,8 @@ def locked_constraints(uv: str) -> list[str]:
             "export",
             "--frozen",
             "--package",
-            "ontic-nn",
-            "--extra",
-            "backbones",
+            package,
+            *[arg for extra in extras for arg in ("--extra", extra)],
             "--no-dev",
             "--no-hashes",
             "--no-emit-workspace",
@@ -146,10 +149,21 @@ def locked_constraints(uv: str) -> list[str]:
     return lines
 
 
-def install_dependencies(uv: str, protected: dict[str, str]) -> None:
+def install_dependencies(
+    uv: str,
+    protected: dict[str, str],
+    *,
+    extras: tuple[str, ...] = ("backbones",),
+    data_extras: tuple[str, ...] = (),
+    viz_extras: tuple[str, ...] = (),
+    dry_run: bool = False,
+) -> None:
     with tempfile.TemporaryDirectory(prefix="ontic-backbones-") as temporary:
         constraints = Path(temporary) / "stack.txt"
-        pins = locked_constraints(uv)
+        pins = locked_constraints(uv, extras=extras)
+        for package, selected in (("ontic-data", data_extras), ("ontic-viz", viz_extras)):
+            if selected:
+                pins.extend(locked_constraints(uv, package=package, extras=selected))
         pins.extend(f"{name}=={v}" for name, v in sorted(protected.items()))
         constraints.write_text("\n".join(pins) + "\n")
         run(
@@ -162,14 +176,17 @@ def install_dependencies(uv: str, protected: dict[str, str]) -> None:
                 sys.executable,
                 "--constraint",
                 str(constraints),
+                *(["--dry-run"] if dry_run else []),
                 "--editable",
                 str(ROOT),
                 "--editable",
-                f"{ROOT / 'packages/ontic-nn'}[backbones]",
+                f"{ROOT / 'packages/ontic-nn'}[{','.join(extras)}]",
                 "--editable",
-                str(ROOT / "packages/ontic-data"),
+                str(ROOT / "packages/ontic-data")
+                + (f"[{','.join(data_extras)}]" if data_extras else ""),
                 "--editable",
-                str(ROOT / "packages/ontic-viz"),
+                str(ROOT / "packages/ontic-viz")
+                + (f"[{','.join(viz_extras)}]" if viz_extras else ""),
             ]
         )
     after = stack_versions()

@@ -185,7 +185,10 @@ it accepts multiple views independently and excludes occluded/invalid 3D samples
 
 See [Point tracking](point_tracking.md) for the full contract, backbone adapter,
 usage, upstream installation requirements and native restrictions. Importing
-the registry does not load upstream code or weights.
+the registry does not load upstream code or weights. The workspace command
+`uv run --no-sync python scripts/install_models.py` installs the tracker extras,
+pinned sources and TAPIP3D's CUDA extension alongside the backbones. See
+[model installation](../packages/ontic-nn/README.md#model-installation) for prerequisites.
 
 ## wrappers
 
@@ -197,10 +200,11 @@ resizes internally to its `long_side` (patch-snapped), and returns a
 (`name -> config class`); the research package itself is imported inside
 `build()` / `forward` and the `ImportError` names the `ontic-nn[<extra>]` extra
 and the repository. Individual extras carry the support dependencies. For all
-viewer backbones, run `uv run --no-sync python scripts/install_backbones.py`
-from the workspace root: it installs `ontic-nn[backbones]` plus pinned research
-sources while preserving the environment's PyTorch/CUDA stack. See
-[setup and verification](../packages/ontic-nn/README.md#geometry-backbone-setup).
+viewer backbones and trackers, run `uv run --no-sync python scripts/install_models.py`
+from the workspace root: it installs their extras plus pinned research sources
+while preserving the environment's PyTorch/CUDA stack. Use `--group backbones`
+for backbones alone; the original `install_backbones.py` command is also supported.
+See [setup and verification](../packages/ontic-nn/README.md#model-installation).
 Weights come separately from the HF hub.
 
 **Contract.** `BackboneConfig` (dataclass): freezing switches

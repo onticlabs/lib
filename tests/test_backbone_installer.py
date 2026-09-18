@@ -53,7 +53,7 @@ def test_locked_support_constraints_do_not_override_the_selected_cuda_stack(monk
 def test_install_constrains_stack_without_pulling_in_audio(monkeypatch):
     protected = {"torch": "2.12.1+cu130", "numpy": "2.5.1", "triton": "3.7.1"}
     monkeypatch.setattr(installer, "stack_versions", lambda: protected.copy())
-    monkeypatch.setattr(installer, "locked_constraints", lambda uv: ["open3d==0.20.0"])
+    monkeypatch.setattr(installer, "locked_constraints", lambda uv, **kw: ["open3d==0.20.0"])
     calls = []
 
     def install(command):
@@ -72,7 +72,7 @@ def test_install_constrains_stack_without_pulling_in_audio(monkeypatch):
 
 
 def test_changed_stack_is_not_reported_as_success(monkeypatch):
-    monkeypatch.setattr(installer, "locked_constraints", lambda uv: [])
+    monkeypatch.setattr(installer, "locked_constraints", lambda uv, **kw: [])
     monkeypatch.setattr(installer, "run", lambda command: None)
     monkeypatch.setattr(installer, "stack_versions", lambda: {"torch": "2.4.1"})
     with pytest.raises(RuntimeError, match="ML stack changed"):
