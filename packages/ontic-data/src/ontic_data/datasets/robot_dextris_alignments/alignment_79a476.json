@@ -1,0 +1,182 @@
+{
+  "schema_version": 1,
+  "robot_model": "franka_duo",
+  "recording": "alignment_79a476",
+  "frame_index": 0,
+  "calibration_sha256": "44c86e12df10c3d7b8be075efd362a1ff845d41edd2a9b86437dc75f2bf03dc2",
+  "base_pose": [
+    -0.603131535000662,
+    0.004183040505934895,
+    -0.41259029500823535,
+    0.9995260589204902,
+    0.001457737412740984,
+    7.760994073963847e-05,
+    0.030749414908345426
+  ],
+  "qpos": {
+    "left_arm": [
+      -1.444932447644181,
+      -0.6037185136387093,
+      0.6904463457445249,
+      -2.306505456302374,
+      0.7813201819628699,
+      1.3539113268674252,
+      -1.029594547855925
+    ],
+    "right_arm": [
+      1.3525362463125836,
+      -0.586836165548066,
+      -0.8989564590003375,
+      -2.196746827327308,
+      -1.0755242207050963,
+      1.1024298133956045,
+      0.9937029609825629
+    ],
+    "left_gripper": [
+      0.0,
+      0.0
+    ],
+    "right_gripper": [
+      0.0,
+      0.0
+    ]
+  },
+  "provenance": {
+    "kind": "image_fit",
+    "units": "metres, radians; base_pose maps duo cell to calibrated world as xyz + wxyz",
+    "method": "Base fitted to manually annotated base-badge centres with an upright prior; arm joints fitted to approximate image landmarks, then refined against silhouette edges. Fixed original intrinsics, extrinsics and lens distortion.",
+    "fit_cameras": [
+      "P03",
+      "P04",
+      "P05",
+      "P07"
+    ],
+    "excluded_cameras": {
+      "P06": "Stationary base-badge projections disagree by about 48 pixels at 960x540; also inconsistent on the checkerboard. Original calibration was retained."
+    },
+    "robotics_commit": "694cc5a2b6b06c200392f91c5db2dd6ea4ab2610",
+    "duobench_commit": "0b3cebd23b04d13fdf00318245648e859b184272",
+    "limitations": [
+      "Approximate visual pose, not measured joint states.",
+      "Only frame 0 of alignment_79a476 is fitted.",
+      "Cables, wrist cameras and the real central mount housing are absent from the mesh.",
+      "Grippers are assumed open; their joint states were not measured."
+    ],
+    "base_badge_observations": {
+      "image_size": [
+        540,
+        960
+      ],
+      "point_in_fr3_link0": [
+        0.0607,
+        0,
+        0.11
+      ],
+      "pixels": {
+        "P03": {
+          "right": [
+            424,
+            217
+          ],
+          "left": [
+            505,
+            218
+          ]
+        },
+        "P04": {
+          "right": [
+            495,
+            83
+          ],
+          "left": [
+            597,
+            78
+          ]
+        },
+        "P05": {
+          "right": [
+            430,
+            81
+          ],
+          "left": [
+            515,
+            86
+          ]
+        },
+        "P07": {
+          "right": [
+            497,
+            183
+          ],
+          "left": [
+            577,
+            185
+          ]
+        },
+        "P06": {
+          "right": [
+            466,
+            211
+          ],
+          "left": [
+            547,
+            222
+          ]
+        }
+      },
+      "reprojection_error_xy_px": {
+        "P03": [
+          [
+            1.2078,
+            -0.2176
+          ],
+          [
+            0.5278,
+            -0.2026
+          ]
+        ],
+        "P04": [
+          [
+            1.2766,
+            0.4719
+          ],
+          [
+            -0.2199,
+            -0.302
+          ]
+        ],
+        "P05": [
+          [
+            -1.2151,
+            0.1396
+          ],
+          [
+            -0.7361,
+            0.271
+          ]
+        ],
+        "P07": [
+          [
+            -0.9194,
+            -0.8927
+          ],
+          [
+            -0.1784,
+            0.7381
+          ]
+        ],
+        "P06": [
+          [
+            47.9855,
+            -1.8038
+          ],
+          [
+            48.1941,
+            -2.6372
+          ]
+        ]
+      }
+    },
+    "base_badge_rmse_px_960x540": 1.0091937115836582
+  }
+}

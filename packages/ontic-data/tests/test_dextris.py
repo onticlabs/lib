@@ -1,6 +1,7 @@
 """Shared DEXTRIS loading for nested hand captures and flat robot recordings."""
 
 import json
+import hashlib
 import subprocess
 from types import SimpleNamespace
 
@@ -116,3 +117,46 @@ def test_metadata_reuses_counts_without_opening_videos_and_preserves_failed_rebu
     with pytest.raises(ValueError, match="index was not written"):
         dextris.write_metadata(cfg, path)
     assert path.read_bytes() == original
+
+
+def test_robot_alignment_is_bound_to_its_frame_and_camera_calibration(tmp_path):
+    sample = _sample(tmp_path, "demo_fit")
+    calibration = sample / "calibration_result.json"
+    alignment = {
+        "schema_version": 1,
+        "robot_model": "franka_duo",
+        "calibration_sha256": hashlib.sha256(calibration.read_bytes()).hexdigest(),
+        "frame_index": 0,
+        "base_pose": [-0.6, 0.0, -0.4, 1.0, 0.0, 0.0, 0.0],
+        "qpos": {"left_arm": [0.1] * 7, "right_arm": [-0.1] * 7},
+    }
+    path = sample / "robot_alignment.json"
+    path.write_text(json.dumps(alignment))
+    ds = SimpleNamespace(
+        cfg=dextris.RobotDextrisDatasetCfg(root=str(tmp_path)),
+        _sample_dir=lambda rec: sample,
+        _calib_for=lambda directory: dextris.parse_calibration(calibration),
+    )
+
+    def view():
+        return dextris.DextrisSceneView(ds, {"sample_id": sample.name})
+
+    scene = view()
+    state = scene.robot_state(0)
+    assert state["source"] == "image_fit"
+    assert state["base_pose"] == alignment["base_pose"]
+    assert state["qpos"] == alignment["qpos"]
+    assert scene.robot_state(1) is None  # Never freeze an estimated pose over a video.
+    assert scene.robot_state(0) == state
+
+    alignment["base_pose"][3] = 0.0
+    path.write_text(json.dumps(alignment))
+    with pytest.raises(ValueError, match="Invalid robot pose"):
+        view().robot_state(0)
+
+    alignment["calibration_sha256"] = "a-different-world-frame"
+    path.write_text(json.dumps(alignment))
+    assert view().robot_state(0) is None
+
+    ds.cfg.load_robot_alignment = False
+    assert view().robot_state(0) is None

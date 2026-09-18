@@ -130,7 +130,11 @@ class SceneView:
         return None
 
     def robot_state(self, frame_idx: int) -> dict | None:
-        """Recorded articulated-agent state at one frame (viewer overlay), or None."""
+        """Articulated-agent pose at one frame (viewer overlay), or None.
+
+        Image-fitted poses carry ``source='image_fit'`` to distinguish them from
+        recorded joint measurements. They apply only to their calibrated frame.
+        """
         return None
 
 

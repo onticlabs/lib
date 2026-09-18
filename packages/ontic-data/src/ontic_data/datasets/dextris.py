@@ -18,11 +18,12 @@ pandas when present (extra ``tables``); otherwise samples are discovered on disk
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
-from functools import lru_cache
+from functools import cached_property, lru_cache
 from pathlib import Path
 from typing import Literal
 
@@ -59,6 +60,7 @@ class DextrisDatasetCfg(DatasetCfg):
     load_hand_poses: bool = True
     require_both_hands: bool = False
     video_backend: VideoBackend = "torchcodec"
+    load_robot_alignment: bool = False
 
     def build(
         self, stage: Stage, *, step_fn: StepFn | None = None, horizon_fn: HorizonFn | None = None
@@ -75,6 +77,7 @@ class RobotDextrisDatasetCfg(DextrisDatasetCfg):
     split_mode: Literal["scene", "none"] = "none"
     load_hand_poses: bool = False
     video_backend: VideoBackend = "opencv"
+    load_robot_alignment: bool = True
     workspace_min: list[float] | None = None
     workspace_max: list[float] | None = None
 
@@ -398,6 +401,50 @@ class DextrisSceneView(SceneView):
 
     def extrinsics(self, frame_idx: int) -> Tensor:
         return self._extr
+
+    @cached_property
+    def _robot_alignment(self) -> dict | None:
+        if not self.ds.cfg.load_robot_alignment:
+            return None
+        path = self.sample_dir / "robot_alignment.json"
+        if not path.exists():
+            path = Path(__file__).with_name("robot_dextris_alignments") / f"{self.sid}.json"
+        if not path.exists():
+            return None
+        alignment = json.loads(path.read_text())
+        # A placement belongs to a particular calibrated world, not just a scene name.
+        digest = hashlib.sha256((self.sample_dir / "calibration_result.json").read_bytes())
+        if alignment["calibration_sha256"] != digest.hexdigest():
+            return None
+        if alignment["schema_version"] != 1 or alignment["robot_model"] != "franka_duo":
+            raise ValueError(f"Unsupported robot alignment: {path}")
+        pose = np.asarray(alignment["base_pose"], dtype=np.float64)
+        groups = alignment["qpos"]
+        if (
+            pose.shape != (7,)
+            or not np.isfinite(pose).all()
+            or not np.isclose(np.linalg.norm(pose[3:]), 1.0, atol=1e-5)
+            or any(
+                np.asarray(groups.get(f"{side}_arm", [])).shape != (7,)
+                or not np.isfinite(groups[f"{side}_arm"]).all()
+                for side in ("left", "right")
+            )
+        ):
+            raise ValueError(f"Invalid robot pose in {path}")
+        if not isinstance(alignment["frame_index"], int) or alignment["frame_index"] < 0:
+            raise ValueError(f"Invalid robot frame in {path}")
+        return alignment
+
+    def robot_state(self, frame_idx: int) -> dict | None:
+        alignment = self._robot_alignment
+        if alignment is None or frame_idx != alignment["frame_index"]:
+            return None
+        return {
+            "qpos": alignment["qpos"],
+            "base_pose": alignment["base_pose"],
+            "source": "image_fit",
+            "frame_index": alignment["frame_index"],
+        }
 
     def load_views(self, cam_ixs, frame_idx, out_hw, *, depth=False, side="target"):
         views = []
