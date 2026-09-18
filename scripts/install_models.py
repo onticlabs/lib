@@ -4,7 +4,7 @@
 Run ``uv run --no-sync python scripts/install_models.py`` in a Linux Python 3.12+
 virtualenv with the desired torch/torchvision/NumPy stack already installed.
 TAPIP3D needs a CUDA toolkit matching torch and a C++ compiler. Installation
-preserves that stack and never downloads pretrained weights.
+preserves that stack. Add --download-weights to also fetch pinned checkpoints.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ import sys
 import sysconfig
 
 import install_backbones as backbones
+import model_weights
 
 TRACKER_MANIFEST = Path(__file__).with_name("tracker_sources.json")
 TRACKER_MODULES = {
@@ -177,7 +178,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="resolve dependencies and list sources without installing",
+        help="preview sources/dependencies and selected downloads without installing",
+    )
+    downloads = parser.add_mutually_exclusive_group()
+    downloads.add_argument(
+        "--download-weights", action="store_true", help="also download pinned inference assets"
+    )
+    downloads.add_argument(
+        "--download-only", action="store_true", help="download weights without installing/building"
+    )
+    parser.add_argument(
+        "--weights-dir", type=Path, help="asset directory (default: venv/share/ontic-models)"
+    )
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        choices=[m["name"] for m in model_weights.select_models("all")],
+        help="limit downloads to named models; does not limit source installation",
     )
     parser.add_argument(
         "--check-one",
@@ -185,12 +202,24 @@ def main(argv: list[str] | None = None) -> int:
         help=argparse.SUPPRESS,
     )
     args = parser.parse_args(argv)
+    downloading = args.download_weights or args.download_only
+    if (args.weights_dir or args.models) and not downloading:
+        parser.error("--weights-dir/--models require --download-weights or --download-only")
+    if downloading and (args.check or args.check_one):
+        parser.error("download options cannot be combined with import-only checks")
+    if downloading:
+        model_weights.select_models(args.group, args.models)
     if args.check_one:
         return check_one(args.check_one)
     if args.check:
         return check_installation(args.group, args.skip_cuda_build)
     if sys.prefix == sys.base_prefix or sys.platform != "linux" or sys.version_info < (3, 12):
-        parser.error("use a Linux Python >=3.12 virtualenv with your selected ML stack installed")
+        parser.error("use a Linux Python >=3.12 virtualenv")
+    if args.download_only:
+        model_weights.download_weights(
+            args.group, directory=args.weights_dir, names=args.models, dry_run=args.dry_run
+        )
+        return 0
     uv = shutil.which("uv")
     if not uv or not shutil.which("git"):
         parser.error("uv and git must be on PATH")
@@ -229,12 +258,19 @@ def main(argv: list[str] | None = None) -> int:
             if environment is not None:
                 build_pointops(uv, paths["tapip3d"], environment)
     if args.dry_run:
+        if downloading:
+            model_weights.download_weights(
+                args.group, directory=args.weights_dir, names=args.models, dry_run=True
+            )
         print(
             "Dry run: no sources installed, no CUDA build attempted, no weights downloaded.",
             flush=True,
         )
         return 0
-    return check_installation(args.group, args.skip_cuda_build)
+    result = check_installation(args.group, args.skip_cuda_build)
+    if result == 0 and downloading:
+        model_weights.download_weights(args.group, directory=args.weights_dir, names=args.models)
+    return result
 
 
 if __name__ == "__main__":

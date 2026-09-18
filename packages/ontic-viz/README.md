@@ -12,13 +12,17 @@ Install the viewer, dataset backends, backbones, video-depth models and all four
 trackers into the existing environment, preserving its PyTorch/CUDA versions:
 
 ```bash
-uv run --no-sync python scripts/install_models.py
+uv run --no-sync python scripts/install_models.py --download-weights
 ```
 
 See [model installation and verification](../ontic-nn/README.md#model-installation)
 for prerequisites and import checks. TAPIP3D needs a matching CUDA toolkit and
 compiler; `--skip-cuda-build` explicitly leaves that tracker incomplete.
-Checkpoint downloads remain opt-in. Installed tracker sources are discovered
+`--download-weights` includes pinned checkpoints and auxiliary assets (about
+63.7 GB before cache reuse); omit it for a code-only install. VGGT-Omega requires
+approved Hugging Face access and `hf auth login`. Use `--download-only` to fetch
+weights later without compiling, and `--models vggt cotracker3` to limit downloads.
+The viewer automatically loads the generated model paths. Installed tracker sources are discovered
 automatically, so the checkout fields can stay empty.
 
 ```bash
@@ -295,13 +299,15 @@ uv run --no-sync ontic-backbone-viewer --device cuda \
   --recording artifacts/tracking/hocap-moge3-mvtracker.viewer.npz
 ```
 
-`--model-config models.json` pre-fills local backbone checkpoints and each
-tracker's model files. Switching trackers restores that tracker's paths and
-download settings, including any edits made during the session:
+The viewer reads `<virtualenv>/share/ontic-models/viewer-models.json` after an
+installer download. `--model-config models.json` replaces those defaults with
+local backbone/video checkpoints and each tracker's model files. Switching models
+restores their paths and settings, including any edits made during the session:
 
 ```json
 {
   "backbone_checkpoints": {"vggt": "/models/vggt.pt", "moge3": "/models/moge3.pt"},
+  "video_checkpoints": {"vda_small": "/models/metric_video_depth_anything_vits.pth"},
   "trackers": {
     "mvtracker": {"repo_path": "/research/mvtracker", "checkpoint_path": "/models/mvtracker.pth"},
     "tapip3d": {"repo_path": "/research/TAPIP3D", "checkpoint_path": "/models/tapip3d_final.pth"},

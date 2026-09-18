@@ -44,7 +44,7 @@ From the repository root, in a Linux Python 3.12+ virtualenv containing your
 chosen PyTorch, torchvision and NumPy:
 
 ```bash
-uv run --no-sync python scripts/install_models.py
+uv run --no-sync python scripts/install_models.py --download-weights
 ```
 
 This installs the four workspace packages, dataset backends, viewer extras,
@@ -54,17 +54,23 @@ the invoking environment and checks upstream imports in separate processes.
 Installed PyTorch, CUDA runtime, Triton and NumPy versions are preserved.
 
 You need `git`, `uv`, a C++ compiler and a CUDA toolkit (`nvcc`) compatible with
-your PyTorch build. Set `CUDA_HOME` if the toolkit is outside PATH. Checkpoints,
-datasets, system drivers, FFmpeg and the private robotics checkout are separate;
-installation never downloads weights. Downloads are opt-in in the viewer;
-Python API callers should set `allow_download=False` for offline operation.
+your PyTorch build. Set `CUDA_HOME` if the toolkit is outside PATH. The command
+also downloads pinned checkpoints and auxiliary assets (about **63.7 GB** before
+cache reuse) and configures the viewer's paths automatically. VGGT-Omega requires
+approved Hugging Face access and `hf auth login`. Omit `--download-weights` to
+install code only. Datasets, system drivers, FFmpeg and the private robotics
+checkout are separate. Python API callers should set `allow_download=False` for
+offline operation.
 
 ```bash
 # Verify an existing setup without installing or downloading weights.
 uv run --no-sync python scripts/install_models.py --check
 
-# Optional: inspect dependency resolution and source pins without installation.
-uv run --no-sync python scripts/install_models.py --dry-run
+# Download weights into an existing setup, without compiling or requiring a GPU.
+uv run --no-sync python scripts/install_models.py --download-only
+
+# Optional: preview selected download sizes without downloading.
+uv run --no-sync python scripts/install_models.py --download-only --dry-run
 
 # Start the viewer's synthetic demo; no checkpoints needed.
 uv run --no-sync ontic-backbone-viewer --demo --device cpu --host 127.0.0.1

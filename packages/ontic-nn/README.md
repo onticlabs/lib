@@ -58,7 +58,7 @@ Install backbones, video-depth models, all four trackers, dataset backends and
 the viewer with one command from the workspace root:
 
 ```bash
-uv run --no-sync python scripts/install_models.py
+uv run --no-sync python scripts/install_models.py --download-weights
 ```
 
 The command uses the invoking Linux Python 3.12+ virtualenv, with `git`, `uv`,
@@ -95,12 +95,53 @@ imports, so their generic package names are not added to every Python process.
 Explicit `repo_path` settings and TAPIP3D's environment override take precedence.
 No manual tracker checkout paths are needed after this installer succeeds.
 
-The installer fetches code and support dependencies, **not checkpoints**. Supply
-local weights or enable downloads in the viewer. Python backbone/tracker configs
-default to allowing downloads at `build()` time; set `allow_download=False` for
-offline operation. Video-depth configs default to downloads disabled.
-VGGT-Omega requires Hugging Face access; TrackCraft3R additionally requires the
-Wan base model and tokenizer assets. See [tracker setup and weights](../../docs/point_tracking.md#upstream-setup-and-limits).
+With `--download-weights`, the installer downloads the default checkpoints for
+all seven viewer backbones, VDA Small/Base/Large, VeloDepth, and all four trackers.
+DA3's backbone and temporal mode share one snapshot. It includes gtdepth's
+DINOv2-B weights, VeloDepth's ConvNeXt initializers, and TrackCraft3R's Wan base
+model and tokenizer. Pins, file sizes and SHA256 digests are recorded in
+[`scripts/model_weights.json`](../../scripts/model_weights.json). Large weight
+files are verified before publishing the viewer configuration.
+
+```bash
+# Weights only: no source installation, CUDA toolkit, or GPU needed.
+uv run --no-sync python scripts/install_models.py --download-only
+
+# Smaller selection; names limit downloads, not source installation.
+uv run --no-sync python scripts/install_models.py --download-only --models vggt cotracker3
+
+# Preview sizes, or put assets on a separate disk.
+uv run --no-sync python scripts/install_models.py --download-only --dry-run
+uv run --no-sync python scripts/install_models.py --download-only --weights-dir /data/ontic-models
+```
+
+The complete asset set is about **63.7 GB** before cache reuse; TrackCraft3R and
+its base model account for about 35.3 GB. Assets default to
+`<virtualenv>/share/ontic-models/`. Hugging Face files use its resumable cache under
+`hub/`; URL assets live under `torch/hub/checkpoints/`, and Wan assets use
+`wan_models/Wan-AI/Wan2.1-T2V-1.3B/`. URL transfers retry from the beginning.
+`--download-only` needs `huggingface-hub` installed, as supplied by the normal
+installer. VGGT-Omega requires approved access at
+[its Hugging Face repository](https://huggingface.co/facebook/VGGT-Omega) and
+`hf auth login` (or an existing `HF_TOKEN`).
+
+After all selected downloads succeed, the installer writes
+`<virtualenv>/share/ontic-models/viewer-models.json`, even with `--weights-dir`.
+The viewer automatically reads this file; explicit `--model-config` replaces it.
+Incremental downloads preserve paths for other models and failed downloads leave
+the previous configuration intact. Downloaded assets can be reused on retry.
+The JSON contains `backbone_checkpoints`, `video_checkpoints`, named `trackers`
+(including Wan's cache path), and `torch_hub_dir` for VeloDepth's initializers.
+For Python API use, pass the corresponding `checkpoint_path` and, for VeloDepth,
+set `torch.hub.set_dir(config["torch_hub_dir"])` before building the model.
+TrackCraft3R also needs its recorded `base_model_cache_dir`.
+
+Omit download flags to install code and support dependencies only. Python
+backbone/tracker configs default to allowing downloads at `build()` time; set
+`allow_download=False` for offline operation. Video-depth configs and the viewer
+default to downloads disabled. These assets cover the viewer's default model
+variants, not every optional metric-depth family or backbone variant. See
+[tracker setup and weights](../../docs/point_tracking.md#upstream-setup-and-limits).
 Datasets, FFmpeg/system drivers and the private robot-model checkout are not
 installed. Use `uv run --no-sync` when launching in a custom ML environment;
 plain `uv run`/`uv sync` may synchronize it back to workspace dependency selections.

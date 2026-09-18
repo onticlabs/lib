@@ -186,7 +186,8 @@ it accepts multiple views independently and excludes occluded/invalid 3D samples
 See [Point tracking](point_tracking.md) for the full contract, backbone adapter,
 usage, upstream installation requirements and native restrictions. Importing
 the registry does not load upstream code or weights. The workspace command
-`uv run --no-sync python scripts/install_models.py` installs the tracker extras,
+`uv run --no-sync python scripts/install_models.py --download-weights` installs
+and downloads the default viewer models, including tracker extras,
 pinned sources and TAPIP3D's CUDA extension alongside the backbones. See
 [model installation](../packages/ontic-nn/README.md#model-installation) for prerequisites.
 
@@ -200,12 +201,13 @@ resizes internally to its `long_side` (patch-snapped), and returns a
 (`name -> config class`); the research package itself is imported inside
 `build()` / `forward` and the `ImportError` names the `ontic-nn[<extra>]` extra
 and the repository. Individual extras carry the support dependencies. For all
-viewer backbones and trackers, run `uv run --no-sync python scripts/install_models.py`
+viewer backbones and trackers, run
+`uv run --no-sync python scripts/install_models.py --download-weights`
 from the workspace root: it installs their extras plus pinned research sources
 while preserving the environment's PyTorch/CUDA stack. Use `--group backbones`
 for backbones alone; the original `install_backbones.py` command is also supported.
 See [setup and verification](../packages/ontic-nn/README.md#model-installation).
-Weights come separately from the HF hub.
+Omit `--download-weights` for code only; `--download-only` fetches weights later.
 
 **Contract.** `BackboneConfig` (dataclass): freezing switches
 (`freeze_backbone`, `freeze_dpt_head`, `freeze_cam_dec`, `freeze_cam_enc`),

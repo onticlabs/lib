@@ -134,10 +134,13 @@ The unified workspace installer installs all backbones and trackers, including
 pinned research sources, their Python dependencies and TAPIP3D's CUDA extension:
 
 ```bash
-uv run --no-sync python scripts/install_models.py
+uv run --no-sync python scripts/install_models.py --download-weights
 ```
 
-Use `--group trackers` to install trackers alone and `--check` to verify imports.
+Use `--group trackers` to install/download trackers alone and `--check` (without
+download flags) to verify imports. `--download-weights` includes TrackCraft3R's
+Wan assets and generates model paths that the viewer reads automatically.
+Omit that flag for code only, or use `--download-only` to fetch weights later.
 After installation, the adapters discover the pinned sources automatically;
 explicit checkout paths remain supported. See
 [model installation](../packages/ontic-nn/README.md#model-installation) for

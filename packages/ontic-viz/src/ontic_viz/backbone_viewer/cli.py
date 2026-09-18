@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 
 import viser
 
@@ -36,7 +37,9 @@ def build_parser(names: list[str]) -> argparse.ArgumentParser:
         help="saved viewer .npz run; repeat for comparisons",
     )
     p.add_argument(
-        "--model-config", type=Path, help="JSON with backbone checkpoints and tracker defaults"
+        "--model-config",
+        type=Path,
+        help="model paths JSON (default: virtualenv/share/ontic-models/viewer-models.json)",
     )
     p.add_argument("--share", action="store_true", help="request a public viser share URL")
     p.add_argument("--presets", default=None, help="presets JSON store (default: user config)")
@@ -48,8 +51,13 @@ def build_parser(names: list[str]) -> argparse.ArgumentParser:
 
 
 def apply_model_config(viewer: BackboneViewer, config: dict) -> None:
+    if hub := config.get("torch_hub_dir"):
+        import torch
+
+        torch.hub.set_dir(hub)
     viewer._backbone_paths.update(config.get("backbone_checkpoints", {}))
     viewer._on_backbone_change()
+    viewer.tracking.configure_video_checkpoints(config.get("video_checkpoints", {}))
     trackers = dict(config.get("trackers", {}))
     # Older configs describe MVTracker alone; never apply these paths to other trackers.
     legacy = config.get("tracker")
@@ -59,9 +67,18 @@ def apply_model_config(viewer: BackboneViewer, config: dict) -> None:
     viewer.tracking.configure_model_files(trackers)
 
 
+def load_model_config(path: Path | None) -> dict:
+    """Explicit configs replace the installer defaults; absent defaults are optional."""
+    default = Path(sys.prefix) / "share/ontic-models/viewer-models.json"
+    if path is not None:
+        return json.loads(path.read_text())
+    return json.loads(default.read_text()) if default.is_file() else {}
+
+
 def main(argv: list[str] | None = None) -> None:
     names = dataset_names()
     args = build_parser(names).parse_args(argv)
+    config = load_model_config(args.model_config)
     roots = {
         name: root
         for name in names
@@ -72,8 +89,7 @@ def main(argv: list[str] | None = None) -> None:
     viewer = BackboneViewer(
         server, device=args.device, roots=roots, stage=args.stage, presets_path=args.presets
     )
-    if args.model_config:
-        config = json.loads(args.model_config.read_text())
+    if config:
         apply_model_config(viewer, config)
     if args.recording:
         viewer.register_recordings(args.recording)

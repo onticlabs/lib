@@ -190,3 +190,51 @@ def test_dry_run_resolves_all_extras_without_fetching_or_building(monkeypatch):
             dry_run=True,
         )
     ]
+
+
+def test_download_only_bypasses_install_and_cuda_checks(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        installer.backbones, "stack_versions", lambda: pytest.fail("inspected torch")
+    )
+    monkeypatch.setattr(installer, "cuda_build_environment", lambda: pytest.fail("requires CUDA"))
+    monkeypatch.setattr(
+        installer.model_weights, "download_weights", lambda *a, **kw: calls.append((a, kw))
+    )
+    assert installer.main(["--download-only", "--models", "cotracker3", "--dry-run"]) == 0
+    assert calls == [(("all",), dict(directory=None, names=["cotracker3"], dry_run=True))]
+
+
+@pytest.mark.parametrize("args", [["--models", "vggt"], ["--check", "--download-weights"]])
+def test_invalid_download_combinations_fail_before_actions(args):
+    with pytest.raises(SystemExit) as exc:
+        installer.main(args)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("check_result", [0, 1])
+def test_combined_install_downloads_only_after_successful_import_checks(monkeypatch, check_result):
+    calls = []
+    monkeypatch.setattr(installer.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(
+        installer.backbones,
+        "stack_versions",
+        lambda: dict(torch="2.4.1", torchvision="0.19.1", numpy="1.26.4"),
+    )
+    monkeypatch.setattr(
+        installer.backbones, "install_dependencies", lambda *a, **kw: calls.append("install")
+    )
+    monkeypatch.setattr(installer.backbones, "checkout", lambda spec, cache: cache / spec["name"])
+    monkeypatch.setattr(installer.backbones, "register_sources", lambda *a: None)
+    monkeypatch.setattr(installer, "register_trackers", lambda *a: None)
+
+    def check(*args):
+        calls.append("check")
+        return check_result
+
+    monkeypatch.setattr(installer, "check_installation", check)
+    monkeypatch.setattr(
+        installer.model_weights, "download_weights", lambda *a, **kw: calls.append("download")
+    )
+    assert installer.main(["--download-weights", "--skip-cuda-build"]) == check_result
+    assert calls == (["install", "check"] if check_result else ["install", "check", "download"])

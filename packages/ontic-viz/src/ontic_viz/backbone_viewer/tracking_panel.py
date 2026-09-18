@@ -272,6 +272,21 @@ class TrackingPanel:
             if self._model_files_owner in settings:
                 self._show_model_files(self._model_files_owner)
 
+    def configure_video_checkpoints(self, checkpoints):
+        """Pre-fill local video checkpoints while preserving inference controls."""
+        unknown = set(checkpoints) - set(VIDEO_DEPTH_MODELS)
+        if unknown:
+            raise ValueError(f"Unknown video models in model config: {sorted(unknown)}")
+        with self._video_settings_lock:
+            self._on_video_model_change()
+            for name, path in checkpoints.items():
+                self._video_settings.setdefault(name, {}).update(
+                    checkpoint_path=path, allow_download=False
+                )
+                if name == self._video_settings_owner:
+                    self.video_checkpoint.value = path
+                    self.video_download.value = False
+
     def _on_video_model_change(self):
         """Keep checkpoint paths and inference controls specific to each model."""
         with self._video_settings_lock:
@@ -296,7 +311,7 @@ class TrackingPanel:
                     **self.video_resolution_defaults(),
                     "fp32": False,
                 }
-                settings = self._video_settings.get(name, defaults)
+                settings = {**defaults, **self._video_settings.get(name, {})}
                 for key, control in controls.items():
                     control.value = settings[key]
             self.update_depth_summary()

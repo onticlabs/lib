@@ -582,3 +582,25 @@ def test_model_config_assigns_paths_to_named_trackers(app, legacy):
     panel._on_tracker_change()
     assert panel.repo.value == mv["repo_path"]
     assert panel.checkpoint.value == mv["checkpoint_path"]
+
+
+def test_model_config_video_paths_survive_model_switches(app, tmp_path, monkeypatch):
+    import torch
+    from ontic_viz.backbone_viewer.cli import apply_model_config
+    from ontic_viz.backbone_viewer.tracking_panel import VIDEO_MODEL_LABELS
+
+    hub_dirs = []
+    monkeypatch.setattr(torch.hub, "set_dir", hub_dirs.append)
+    checkpoints = {name: f"/models/{name}" for name in VIDEO_MODEL_LABELS.values()}
+    panel = app.tracking
+    panel.video_input_size.value = 756
+    apply_model_config(app, {"video_checkpoints": checkpoints, "torch_hub_dir": str(tmp_path)})
+    assert hub_dirs == [str(tmp_path)]
+    assert panel.video_input_size.value == 756
+    for label, name in VIDEO_MODEL_LABELS.items():
+        panel.video_model.value = label
+        panel._on_video_model_change()
+        assert panel.video_checkpoint.value == checkpoints[name]
+        assert panel.video_download.value is False
+    with pytest.raises(ValueError, match="Unknown video models"):
+        panel.configure_video_checkpoints({"typo": "/model"})
