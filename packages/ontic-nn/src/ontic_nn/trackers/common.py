@@ -22,19 +22,43 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class TrackerCapabilities:
+    """What an adapter can consume and how its output should be read.
+
+    Declared once per adapter as ``TrackerBase.CAPABILITIES``. Callers use it to slice
+    clips and to interpret ``TrackerOutput.visibility``; it never changes at runtime.
+    """
+
+    #: Accepts ``V > 1`` cameras in one call. Monocular adapters reject ``V != 1``.
     multiview: bool
+    #: Natively predicts a trajectory for every reference-frame pixel (e.g. TrackCraft3R)
+    #: rather than for sparse points only. Queries are still sampled from that field.
     dense: bool = False
+    #: Queries may start at any clip index. When False every query must sit at ``time == 0``
+    #: and the caller has to re-slice the clip so the query frame comes first.
     arbitrary_query_times: bool = True
+    #: ``"offline"``: the whole clip is tracked in one pass over all cameras jointly.
+    #: ``"offline_per_view"``: each camera is tracked independently; identities are never
+    #: matched or fused across views.
     execution_mode: str = "offline"
+    #: The ``TrackerOutput.visibility_scope`` this adapter reports when visibility is
+    #: available (``"query_view"`` or ``"any_view"``); see ``TrackerOutput``.
     visibility_scope: str = "query_view"
 
 
 @dataclass(kw_only=True)
 class TrackerConfig:
+    """Options every adapter shares; subclasses add model-specific fields and ``build()``."""
+
+    #: Keep upstream weights frozen and in ``eval()`` mode, and run ``forward`` without a graph.
     freeze_tracker: bool = True
+    #: Target long image side for upstream inference, in pixels. Adapters that fix their own
+    #: grid (CoTracker3, TrackCraft3R) treat it as informational.
     long_side: int = 512
+    #: Local checkpoint file or snapshot directory. ``None`` resolves from the hub/upstream.
     checkpoint_path: str | None = None
+    #: Download cache root. ``None`` uses the hub default.
     cache_dir: str | None = None
+    #: When False, never touch the network; missing weights raise instead of downloading.
     allow_download: bool = True
 
     def build(self) -> TrackerBase:
@@ -71,6 +95,11 @@ class TrackerBase(nn.Module):
     def forward(
         self, images: Tensor, queries: PointQueries, *, geometry: GeometrySequence
     ) -> TrackerOutput:
+        """Track ``queries`` through ``images`` (B,T,V,3,H,W in [0,1]) given ``geometry``.
+
+        Implementations call ``validate_tracker_inputs`` first and return through
+        ``make_tracker_output`` so the ``TrackerOutput`` contract holds.
+        """
         raise NotImplementedError
 
 
@@ -84,10 +113,10 @@ class GeometrySequence:
     depth: Tensor  # (B,T,V,Hd,Wd), camera-z, potentially invalid/masked
     extrinsics: Tensor  # (B,T,V,4,4), c2w
     intrinsics: Tensor  # (B,T,V,3,3), normalized
-    depth_valid: Tensor | None = None
-    frame_ids: tuple[str, ...] = ()
-    units: tuple[str, ...] = ()
-    provenance: dict = field(default_factory=dict)
+    depth_valid: Tensor | None = None  # bool (B,T,V,Hd,Wd); extra mask AND-ed with finite & > 0
+    frame_ids: tuple[str, ...] = ()  # len B: world-frame identifier per sequence, or empty
+    units: tuple[str, ...] = ()  # len B: "meters" | "arbitrary" per sequence, or empty
+    provenance: dict = field(default_factory=dict)  # informational: how depth/cameras were made
 
     @property
     def valid_depth(self) -> Tensor:
@@ -195,11 +224,18 @@ class GeometrySequence:
 
 @dataclass
 class PointQueries:
-    ids: Tensor  # int64 (B,N)
-    time: Tensor  # int64 (B,N), clip indices
-    xyz_world: Tensor  # (B,N,3)
-    source_view: Tensor | None = None
-    source_uv: Tensor | None = None  # normalized edge-origin pixel centers
+    """Points to track, given in world space with the clip index at which each starts.
+
+    ``N`` queries per sequence. ``xyz_world`` is the position at ``time`` in the frame of
+    ``GeometrySequence.extrinsics``. ``source_view``/``source_uv`` optionally record the
+    camera and pixel a query was lifted from; they are required for ``V > 1`` projection.
+    """
+
+    ids: Tensor  # int64 (B,N), unique within a sequence; passed through to TrackerOutput.ids
+    time: Tensor  # int64 (B,N), clip indices in [0,T)
+    xyz_world: Tensor  # float (B,N,3), finite, world frame of the geometry
+    source_view: Tensor | None = None  # int64 (B,N), camera index in [0,V); paired with source_uv
+    source_uv: Tensor | None = None  # float (B,N,2), normalized edge-origin pixel centers in [0,1)
 
     @classmethod
     def from_pixels(
@@ -237,12 +273,46 @@ class PointQueries:
 
 @dataclass
 class TrackerOutput:
+    """Per-query 3D trajectories over a clip, in the geometry's world frame and units.
+
+    Built through ``make_tracker_output`` so the shape/dtype rules below hold. ``B`` is the
+    batch, ``T`` the clip length, ``V`` the camera count and ``N`` the number of queries
+    (``N == 0`` is allowed, see ``empty_tracker_output``). Column ``n`` of every tensor
+    belongs to query ``ids[b, n]``; nothing is reordered or aligned to ground truth.
+    """
+
+    #: int64 (B,N). ``PointQueries.ids`` passed through unchanged; unique per sequence.
     ids: Tensor
+    #: float32 (B,T,N,3). Position of each query at every clip index, including frames
+    #: before its query time, in the c2w world frame and depth units of the input
+    #: ``GeometrySequence`` (``metadata["units"]``). May hold NaN/Inf where the adapter
+    #: produced nothing; always mask with ``valid`` before using a sample.
     tracks_world: Tensor
+    #: bool (B,T,N). True where ``tracks_world[b, t, n]`` is finite and the adapter reported
+    #: the sample as produced (e.g. False before the query time for a one-way pass without
+    #: backward tracking). This is *not* visibility: an occluded point with a well-defined
+    #: 3D estimate stays valid. Consumers must never bridge across invalid samples.
     valid: Tensor
+    #: float32 (B,T,N) in [0,1], or None when the adapter has no estimate. Probability that
+    #: the point is unoccluded and inside the image, judged over the cameras named by
+    #: ``visibility_scope``. Independent of ``valid``.
     visibility: Tensor | None = None
+    #: How to read ``visibility``:
+    #: ``"query_view"``: judged only in the camera the query came from (``source_view``);
+    #: other cameras are not consulted.
+    #: ``"any_view"``: visible in at least one of the ``V`` cameras (max over views).
+    #: ``"unavailable"``: ``visibility`` is None. ``make_tracker_output`` forces this value
+    #: whenever no visibility is supplied.
     visibility_scope: str = "unavailable"
+    #: float32 (B,T,V,N) in [0,1], or None. Per-camera visibility, only set by adapters that
+    #: natively produce it (TAPIP3D with ``V == 1``, the analytic demo); never derived here.
+    #: When present, ``visibility`` is its max over ``V`` for ``"any_view"`` or the
+    #: ``source_view`` slice for ``"query_view"``. Not validated by ``make_tracker_output``.
     visibility_per_view: Tensor | None = None
+    #: Free-form provenance, kept JSON-serialisable. ``make_tracker_output`` always sets
+    #: ``frame_ids`` (tuple, len B), ``units`` (tuple of "meters"/"arbitrary", len B) and
+    #: ``geometry_provenance`` (copy of ``GeometrySequence.provenance``); adapters add
+    #: ``tracker``, upstream repo/revision, checkpoint, inference resolution and settings.
     metadata: dict = field(default_factory=dict)
 
 
@@ -408,6 +478,14 @@ def make_tracker_output(
     valid: Tensor | None = None,
     metadata: dict | None = None,
 ) -> TrackerOutput:
+    """Validate raw adapter predictions and package them as a ``TrackerOutput``.
+
+    ``tracks_world`` must be (B,T,N,3) on the query device and is cast to float32. ``valid``
+    (bool (B,T,N)) is AND-ed with finiteness. ``visibility`` (B,T,N) is cast to float32 and
+    must hold probabilities in [0,1]. ``visibility_scope`` falls back to ``"unavailable"``
+    when no visibility is given. Geometry frame ids, units and provenance are merged into
+    ``metadata``.
+    """
     b, t = geometry.depth.shape[:2]
     shape = (b, t, queries.ids.shape[1])
     if tracks_world.shape != (*shape, 3):
@@ -447,6 +525,7 @@ def make_tracker_output(
 def empty_tracker_output(
     images: Tensor, queries: PointQueries, geometry: GeometrySequence, *, visibility_scope: str
 ) -> TrackerOutput:
+    """Output for ``N == 0`` queries: (B,T,0,3) tracks and (B,T,0) visibility."""
     b, t = images.shape[:2]
     return make_tracker_output(
         queries,
