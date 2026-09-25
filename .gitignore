@@ -9,3 +9,7 @@ build/
 
 # Local source recordings; keep large capture archives outside version control.
 /teleop_franka_recordings-*.zip
+
+# Run-once outputs (robot-alignment renders, tracker trial recordings and reports);
+# regenerate them with the scripts documented under docs/.
+artifacts/

@@ -26,17 +26,12 @@ mount housing are absent from the model; grippers are assumed open.
 **P06 was excluded from fitting.** Its projections of both stationary badges
 disagree by approximately 48 pixels horizontally at 960×540. A separate
 checkerboard projection check also showed an inconsistency in that view. The
-original camera calibration is unchanged. All overlays below use that original
+original camera calibration is unchanged. All overlays use that original
 calibration, including its lens distortion, so the P06 mismatch remains visible.
 
-![Robot mesh projected into all eight first-frame images](../artifacts/robot_alignment/robot-dextris/alignment_79a476/all_cameras.jpg)
-
-[Viewer screenshot](../artifacts/robot_alignment/robot-dextris/alignment_79a476/viewer.png) shows the mesh in the reconstructed world.
-
-Individual views: [P03](../artifacts/robot_alignment/robot-dextris/alignment_79a476/P03.jpg),
-[P04](../artifacts/robot_alignment/robot-dextris/alignment_79a476/P04.jpg),
-[P05](../artifacts/robot_alignment/robot-dextris/alignment_79a476/P05.jpg),
-[P07](../artifacts/robot_alignment/robot-dextris/alignment_79a476/P07.jpg).
+The projection overlays (`all_cameras.jpg`, a `viewer.png` screenshot and one image per
+camera) are local render outputs under `artifacts/robot_alignment/robot-dextris/alignment_79a476/`,
+which Git ignores; regenerate them with the command below.
 
 The saved [alignment](../packages/ontic-data/src/ontic_data/datasets/robot_dextris_alignments/alignment_79a476.json)
 contains the `xyz + wxyz` base pose, arm joint angles in radians, the exact camera

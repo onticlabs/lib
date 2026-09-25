@@ -136,6 +136,7 @@ region crop when available; the saved CoTracker3 trial used only the recording's
 display filters, without that additional hand crop.
 
 Each run writes a `.viewer.npz` with images/geometry/tracks, a `.tracks.npz`
-numerical export, and a JSON report under `artifacts/tracking`. Binary recordings
-are ignored by Git. `--recording` accepts the viewer archive, not the numerical
+numerical export, and a JSON report under `artifacts/tracking`. The whole
+`artifacts/` directory is ignored by Git, so reports stay local too.
+`--recording` accepts the viewer archive, not the numerical
 export. Use the module command above to launch playback of the exported archives.
