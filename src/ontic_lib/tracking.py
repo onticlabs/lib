@@ -1,3 +1,5 @@
+"""Metrics tracking: JSON lines under ``./output/metrics.jsonl`` plus best-effort W&B mirroring."""
+
 from __future__ import annotations
 
 import _thread

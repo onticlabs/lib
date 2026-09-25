@@ -21,6 +21,7 @@ import torch
 from torch import Tensor
 
 from ..camera.intrinsics import denormalize_intrinsics
+from ..deps import missing_dependency
 from ..transforms.rigid import invert_rigid_transform
 
 RenderMode = Literal["RGB", "D", "ED", "RGB+D", "RGB+ED"]
@@ -39,8 +40,12 @@ def _gsplat():
     try:
         from gsplat import rasterization
     except ImportError as error:
-        raise RuntimeError(
-            "splats.rendering requires gsplat — install the extra: pip install ontic-lib[gsplat]"
+        raise missing_dependency(
+            "splats.rendering",
+            package="ontic-lib",
+            extra="gsplat",
+            needs="the `gsplat` package",
+            error_type=RuntimeError,
         ) from error
     return rasterization
 

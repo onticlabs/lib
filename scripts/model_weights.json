@@ -1,0 +1,338 @@
+[
+  {
+    "name": "da3",
+    "group": "backbones",
+    "repo_id": "depth-anything/DA3NESTED-GIANT-LARGE-1.1",
+    "revision": "b2359bdf726fb44ef62acca04d629dcf158053e7",
+    "files": [
+      {
+        "name": "config.json",
+        "size": 3113,
+        "sha256": null
+      },
+      {
+        "name": "model.safetensors",
+        "size": 6759558100,
+        "sha256": "8ebe871a022ed58d2fc8fdfb2ebdb31d57b60fe39611c849095851a7b7c6020c"
+      }
+    ],
+    "targets": [
+      "backbone_checkpoints.da3",
+      "video_checkpoints.da3_nested"
+    ]
+  },
+  {
+    "name": "ma",
+    "group": "backbones",
+    "repo_id": "facebook/map-anything",
+    "revision": "a1d87e9086706fb9974f3be5a3e3a0ca5401c5aa",
+    "files": [
+      {
+        "name": "config.json",
+        "size": 5776,
+        "sha256": null
+      },
+      {
+        "name": "model.safetensors",
+        "size": 4914062480,
+        "sha256": "981f060c64664dff3272b5f5a823d350abe71a2f144444db4cfc325f3ed5a3a0"
+      }
+    ],
+    "targets": [
+      "backbone_checkpoints.ma"
+    ]
+  },
+  {
+    "name": "vggt",
+    "group": "backbones",
+    "repo_id": "facebook/VGGT-Omega",
+    "revision": "1041e80fc0e911235d3426b0a3d9a81075111a53",
+    "files": [
+      {
+        "name": "vggt_omega_1b_512.pt",
+        "size": 4576706117,
+        "sha256": "c02da418b18bb01d0392598d3f6147366bcde1bb70fd08a5e3bf7925b0667934"
+      }
+    ],
+    "targets": [
+      "backbone_checkpoints.vggt"
+    ],
+    "checkpoint": "vggt_omega_1b_512.pt"
+  },
+  {
+    "name": "pi3x",
+    "group": "backbones",
+    "repo_id": "yyfz233/Pi3X",
+    "revision": "bb1deea4d7423de5b30691739cb451a3f57dc1d5",
+    "files": [
+      {
+        "name": "config.json",
+        "size": 44,
+        "sha256": null
+      },
+      {
+        "name": "model.safetensors",
+        "size": 5440325620,
+        "sha256": "69972d6e1c4492cb4d737a84fe940e357087d81c52f5c9b7c160b49c1f41669a"
+      }
+    ],
+    "targets": [
+      "backbone_checkpoints.pi3x"
+    ]
+  },
+  {
+    "name": "dvlt",
+    "group": "backbones",
+    "repo_id": "nvidia/dvlt",
+    "revision": "20f919875a00ee3ab2e840f2f31580f4652b7c5e",
+    "files": [
+      {
+        "name": "model.safetensors",
+        "size": 468367852,
+        "sha256": "87aac651e77e381eea02c40c14985d196edfb0d4a1c2d4197acb50ef18776eb5"
+      }
+    ],
+    "targets": [
+      "backbone_checkpoints.dvlt"
+    ],
+    "checkpoint": "model.safetensors"
+  },
+  {
+    "name": "moge3",
+    "group": "backbones",
+    "repo_id": "Ruicheng/moge-3-vitl",
+    "revision": "184008f877d7ad1ad4c2cd2182a9bd1f63d0e5be",
+    "files": [
+      {
+        "name": "model.pt",
+        "size": 1481333394,
+        "sha256": "9b41b7b9f65ad80aab7ad686f5e9cc0d1fd33f1964022618dfbcd52fc1fb7925"
+      }
+    ],
+    "targets": [
+      "backbone_checkpoints.moge3"
+    ],
+    "checkpoint": "model.pt"
+  },
+  {
+    "name": "velodepth",
+    "group": "backbones",
+    "repo_id": "lpiccinelli/velodepth",
+    "revision": "2b2ee9fe44d0b261e736653042cecd7693f99c8c",
+    "files": [
+      {
+        "name": "config.json",
+        "size": 4230,
+        "sha256": null
+      },
+      {
+        "name": "model.safetensors",
+        "size": 1559113196,
+        "sha256": "615335cd006663cd567e0a1c74bef7ed622ea733dbff016844ab64e3da22ce3e"
+      }
+    ],
+    "targets": [
+      "video_checkpoints.velodepth"
+    ],
+    "torch_assets": [
+      {
+        "name": "convnextv2_nano_22k_384_ema.pt",
+        "url": "https://dl.fbaipublicfiles.com/convnext/convnextv2/im22k/convnextv2_nano_22k_384_ema.pt",
+        "size": 62545036,
+        "sha256": "47e8ec2c4ed4f29a2b0d16c303930c9296cb48294547a42a66ca45b36f3a3c15"
+      },
+      {
+        "name": "convnextv2_tiny_22k_384_ema.pt",
+        "url": "https://dl.fbaipublicfiles.com/convnext/convnextv2/im22k/convnextv2_tiny_22k_384_ema.pt",
+        "size": 114604250,
+        "sha256": "ead9174a3bca8a13b2754b5d1f9c20697f701e8f50d2114eb8bdddcaa3b69278"
+      }
+    ]
+  },
+  {
+    "name": "vda_small",
+    "group": "backbones",
+    "repo_id": "depth-anything/Metric-Video-Depth-Anything-Small",
+    "revision": "273d090f2ce17df50c2872d82c8322c45da5b4dd",
+    "files": [
+      {
+        "name": "metric_video_depth_anything_vits.pth",
+        "size": 116444063,
+        "sha256": "3c28432b4e1f0d7bb31cad5151b6313b49457db5aa58d82e85bfb0f8b1311b33"
+      }
+    ],
+    "targets": [
+      "video_checkpoints.vda_small"
+    ],
+    "checkpoint": "metric_video_depth_anything_vits.pth"
+  },
+  {
+    "name": "vda_base",
+    "group": "backbones",
+    "repo_id": "depth-anything/Metric-Video-Depth-Anything-Base",
+    "revision": "f6a245abad4b5a5b0d26722c8e1767ef310c547d",
+    "files": [
+      {
+        "name": "metric_video_depth_anything_vitb.pth",
+        "size": 458249567,
+        "sha256": "f6f58576b9680a112f2428d4f39aff92656d3ae85745b0164675ace8d5b1fade"
+      }
+    ],
+    "targets": [
+      "video_checkpoints.vda_base"
+    ],
+    "checkpoint": "metric_video_depth_anything_vitb.pth"
+  },
+  {
+    "name": "vda_large",
+    "group": "backbones",
+    "repo_id": "depth-anything/Metric-Video-Depth-Anything-Large",
+    "revision": "607fcdbd454b95c3bd39abbd3054142869a527d3",
+    "files": [
+      {
+        "name": "metric_video_depth_anything_vitl.pth",
+        "size": 1538348216,
+        "sha256": "24eba25342e7ee0f054be25da6a852ebd7cfa40cd6bf41a353ecb6abfe24e620"
+      }
+    ],
+    "targets": [
+      "video_checkpoints.vda_large"
+    ],
+    "checkpoint": "metric_video_depth_anything_vitl.pth"
+  },
+  {
+    "name": "gtdepth",
+    "group": "backbones",
+    "targets": [
+      "backbone_checkpoints.gtdepth"
+    ],
+    "checkpoint": "dinov2_vitb14_pretrain.pth",
+    "torch_assets": [
+      {
+        "name": "dinov2_vitb14_pretrain.pth",
+        "url": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_pretrain.pth",
+        "size": 346378731,
+        "sha256": "0b8b82f85de91b424aded121c7e1dcc2b7bc6d0adeea651bf73a13307fad8c73"
+      }
+    ]
+  },
+  {
+    "name": "mvtracker",
+    "group": "trackers",
+    "repo_id": "ethz-vlg/mvtracker",
+    "revision": "010d5d114e860aae6b2568104927b636cdca01bc",
+    "files": [
+      {
+        "name": "mvtracker_200000_june2025.pth",
+        "size": 90542740,
+        "sha256": "a7fa86f2a7223e3e0aa4c1d3eff0dec5fe8a9227a48572ce943b8e49d8a4f8e6"
+      }
+    ],
+    "checkpoint": "mvtracker_200000_june2025.pth",
+    "targets": [
+      "trackers.mvtracker.checkpoint_path"
+    ]
+  },
+  {
+    "name": "tapip3d",
+    "group": "trackers",
+    "repo_id": "zbww/tapip3d",
+    "revision": "08730a588204f258f7a86530df15b2a6426e5f5b",
+    "files": [
+      {
+        "name": "tapip3d_final.pth",
+        "size": 309417450,
+        "sha256": "3a9514d526559838e6158360af2b857da596d064b06a94fae7fd3b85134b2b1e"
+      }
+    ],
+    "checkpoint": "tapip3d_final.pth",
+    "targets": [
+      "trackers.tapip3d.checkpoint_path"
+    ]
+  },
+  {
+    "name": "cotracker3",
+    "group": "trackers",
+    "repo_id": "facebook/cotracker3",
+    "revision": "bf55ea50d4390e1820a267f131cd6587240fb2c5",
+    "files": [
+      {
+        "name": "scaled_online.pth",
+        "size": 101695610,
+        "sha256": "205d34789f19699d64b22cf93f9b697f15f28d4025240e31532e504109837218"
+      }
+    ],
+    "checkpoint": "scaled_online.pth",
+    "targets": [
+      "trackers.cotracker3.checkpoint_path"
+    ]
+  },
+  {
+    "name": "trackcraft3r",
+    "group": "trackers",
+    "repo_id": "trackcraft3r/checkpoint",
+    "revision": "e397c1050bd540062cbd6642ba06a344ca80f116",
+    "files": [
+      {
+        "name": "model.safetensors",
+        "size": 17761542554,
+        "sha256": "d70084c009a9c894654685c1744217a3f86558a2189d3e896d29251ec177a7ad"
+      }
+    ],
+    "checkpoint": "model.safetensors",
+    "targets": [
+      "trackers.trackcraft3r.checkpoint_path"
+    ],
+    "base_model": {
+      "repo_id": "Wan-AI/Wan2.1-T2V-1.3B",
+      "revision": "37ec512624d61f7aa208f7ea8140a131f93afc9a",
+      "files": [
+        {
+          "name": "LICENSE.txt",
+          "size": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "name": "Wan2.1_VAE.pth",
+          "size": 507609880,
+          "sha256": "38071ab59bd94681c686fa51d75a1968f64e470262043be31f7a094e442fd981"
+        },
+        {
+          "name": "config.json",
+          "size": 249,
+          "sha256": "ab37994c43740513f94b3ba6233a784035a67b43c8cde83c8f31aa90468c67ce"
+        },
+        {
+          "name": "diffusion_pytorch_model.safetensors",
+          "size": 5676070424,
+          "sha256": "96b6b242ca1c2f24e9d02cd6596066fab6d310e2d7538f33ae267cb18d957e8f"
+        },
+        {
+          "name": "google/umt5-xxl/special_tokens_map.json",
+          "size": 6623,
+          "sha256": "7b8a9f5040adb67b5805abdfd42c1f8d0f3d0e711f10726580eb3789cd0ad61d"
+        },
+        {
+          "name": "google/umt5-xxl/spiece.model",
+          "size": 4548313,
+          "sha256": "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"
+        },
+        {
+          "name": "google/umt5-xxl/tokenizer.json",
+          "size": 16837417,
+          "sha256": "6e197b4d3dbd71da14b4eb255f4fa91c9c1f2068b20a2de2472967ca3d22602b"
+        },
+        {
+          "name": "google/umt5-xxl/tokenizer_config.json",
+          "size": 61728,
+          "sha256": "ed9a3a8b0faa71a70a32847e0435fe036e6e112d4df4edb7bb48a921e344dc05"
+        },
+        {
+          "name": "models_t5_umt5-xxl-enc-bf16.pth",
+          "size": 11361920418,
+          "sha256": "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d"
+        }
+      ]
+    }
+  }
+]

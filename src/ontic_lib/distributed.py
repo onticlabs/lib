@@ -1,8 +1,7 @@
-"""Distributed-training helpers that aren't tied to any specific model wrapper.
+"""Hang-safe averaging of a training ``log_dict`` across DDP ranks.
 
-The single export here, `avg_log_dict_across_ranks`, is used by `train.py`'s
-shared train/val log path so the same metric-reduction works for both
-`NVSWrapper` and `DynWrapper.validation_step` (they each return a `log_dict`).
+The single export, `avg_log_dict_across_ranks`, sits in the shared train/val
+log path of a training loop so every wrapper's `log_dict` is reduced the same way.
 
 Design goals:
 

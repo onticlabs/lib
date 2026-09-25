@@ -14,17 +14,32 @@ dependencies = [
 [project.optional-dependencies]
 wandb = ["wandb>=0.17"]
 olympus = ["olympus-tracker"]  # team tracker mirror; runs fine without it
-torch = []  # compatibility alias; torch is now a core dependency
 e3nn = ["e3nn>=0.5"]  # only needed for splats.sh spherical-harmonic rotation (wigner_D)
 gsplat = ["gsplat>=1.4"]  # only needed for splats.rendering (CUDA rasterization)
 cute = ["gsplat>=1.4", "nvidia-cutlass-dsl>=4.0"]  # splats.cute batched CuTeDSL rasterizer
+safetensors = ["safetensors>=0.4"]  # io: .safetensors particle files
+ply = ["plyfile>=1.0"]  # io: .ply particle files
+all = ["ontic-lib[wandb,e3nn,gsplat,safetensors,ply]"]
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6", "torch>=2.4"]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "torch>=2.4",
+    "ontic-nn[backbones,ptv3]",
+    "ontic-data[all]",
+    "ontic-viz",
+]
+
+[tool.uv.workspace]
+members = ["packages/*"]
 
 [tool.uv.sources]
 # Not on PyPI: the tracker lives in the team repo (same pattern as SSH clones).
 olympus-tracker = { git = "ssh://git@github.com/onticlabs/olympus.git" }
+ontic-viz = { workspace = true }
+ontic-data = { workspace = true }
+ontic-nn = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -35,5 +50,9 @@ packages = ["src/ontic_lib"]
 
 [tool.ruff]
 line-length = 100
-src = ["src", "tests"]
+src = ["src", "tests", "packages/ontic-nn/src", "packages/ontic-nn/tests", "packages/ontic-data/src", "packages/ontic-data/tests", "packages/ontic-viz/src", "packages/ontic-viz/tests"]
 extend-exclude = ["ext"]  # vendored CUDA extension sources keep their upstream style
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "packages/ontic-nn/tests", "packages/ontic-data/tests", "packages/ontic-viz/tests"]
+addopts = "--import-mode=importlib"

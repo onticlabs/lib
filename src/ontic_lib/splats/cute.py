@@ -13,6 +13,13 @@ CUDA driver new enough for the DSL's bundled CUDA bindings (CUDA 13-era —
 newer than what torch itself needs; ``cudaErrorInsufficientDriver`` at launch
 means the driver, not the port). Ported from fwomo-3d's
 ``model/rendering/{cute_raster,cute_pipeline}.py``.
+
+Because of the no-SH regime, dispatchers that gate on it fall back to stock
+gsplat *silently*: fwomo-3d's ``GSPLAT_CUTE=1`` opt-in only takes this path
+when ``sh_degree is None`` (its ``rendering/rasterizers.py``), so an SH
+training config (e.g. ``sh_degree: 3``) renders through gsplat even with the
+env var set. Setting the flag is not proof the CuTe kernel ran — check the
+dispatch condition when benchmarking.
 """
 
 from __future__ import annotations
@@ -21,6 +28,8 @@ import math
 
 import torch
 from torch import Tensor
+
+from ..deps import missing_dependency
 
 _ALPHA_THRESH = 1.0 / 255.0
 _T_EPS = 1e-4
@@ -32,8 +41,12 @@ def _cutlass():
         import cutlass
         import cutlass.cute  # noqa: F401
     except ImportError as error:
-        raise RuntimeError(
-            "splats.cute requires the CuTeDSL — install the extra: pip install ontic-lib[cute]"
+        raise missing_dependency(
+            "splats.cute",
+            package="ontic-lib",
+            extra="cute",
+            needs="the CuTeDSL (`nvidia-cutlass-dsl`)",
+            error_type=RuntimeError,
         ) from error
     # The DSL resolves the kernel's (string) type annotations against this
     # module's globals, so the lazy import must publish `cute`/`cutlass` there.

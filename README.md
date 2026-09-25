@@ -2,6 +2,111 @@
 
 Shared, promoted code for Ontic experiments.
 
+## Packages
+
+One uv workspace, four installable packages (`ontic-lib` at the root, the
+rest under `packages/`; all at version 0.5.0):
+
+- **`ontic-lib`** (`src/ontic_lib`) — functions, data structures and I/O:
+  geometry (`transforms`, `camera`, `pointops`, `depth`), containers
+  (`structures`: `PointCloud`, `PointBatch`, `Gaussians`), `io` (save/load of
+  structures), `splats`, `metrics`, and training infrastructure. Core deps are
+  torch, numpy, roma and torchmetrics; every module imports with those alone.
+  Overview: [`docs/ontic_lib.md`](docs/ontic_lib.md).
+- **`ontic-nn`** (`packages/ontic-nn`) — neural backbones built on `ontic-lib`:
+  PTv3 over `PointBatch`, DINOv2, DPT heads, plain point transformer, shared
+  transformer layers, and the pretrained-backbone (`wrappers`, 7 keys) and
+  metric-depth (`metric_depth`, 4 keys), temporal video-depth and point-tracker
+  registries. Overview: [`docs/ontic_nn.md`](docs/ontic_nn.md);
+  install notes: [`packages/ontic-nn/README.md`](packages/ontic-nn/README.md).
+- **`ontic-data`** (`packages/ontic-data`) — dataset loaders for temporal
+  multi-view scenes: one example schema, `TemporalSceneDataset`, view sampling,
+  collate, and the `DATASETS` registry (genesis, hocap, taco, dextris,
+  physinone, synthrobot, robot-dextris). Overview: [`docs/ontic_data.md`](docs/ontic_data.md);
+  install notes: [`packages/ontic-data/README.md`](packages/ontic-data/README.md).
+- **`ontic-viz`** (`packages/ontic-viz`) — interactive tools: the
+  `ontic-backbone-viewer` (viser) that runs any registered backbone or metric
+  model on any registered dataset, with video-depth preparation, point tracking,
+  and cached clip playback. Overview: [`docs/ontic_viz.md`](docs/ontic_viz.md);
+  GUI walkthrough: [`packages/ontic-viz/README.md`](packages/ontic-viz/README.md).
+
+The sub-packages are workspace members here; consumers install them as git
+dependencies with a `subdirectory`:
+
+```toml
+[tool.uv.sources]
+ontic-nn = { git = "<repo url>", subdirectory = "packages/ontic-nn" }
+```
+
+## Install the viewer and models
+
+From the repository root, in a Linux Python 3.12+ virtualenv containing your
+chosen PyTorch, torchvision and NumPy:
+
+```bash
+uv run --no-sync python scripts/install_models.py --download-weights
+```
+
+This installs the four workspace packages, dataset backends, viewer extras,
+pinned backbone/video-depth sources and all four trackers: **MVTracker, TAPIP3D,
+CoTracker3 and TrackCraft3R**. It builds TAPIP3D's `pointops2` extension against
+the invoking environment and checks upstream imports in separate processes.
+Installed PyTorch, CUDA runtime, Triton and NumPy versions are preserved.
+
+You need `git`, `uv`, a C++ compiler and a CUDA toolkit (`nvcc`) compatible with
+your PyTorch build. Set `CUDA_HOME` if the toolkit is outside PATH. The command
+also downloads pinned checkpoints and auxiliary assets (about **63.7 GB** before
+cache reuse) and configures the viewer's paths automatically. VGGT-Omega requires
+approved Hugging Face access and `hf auth login`. Omit `--download-weights` to
+install code only. Datasets, system drivers, FFmpeg and the private robotics
+checkout are separate. Python API callers should set `allow_download=False` for
+offline operation.
+
+```bash
+# Verify an existing setup without installing or downloading weights.
+uv run --no-sync python scripts/install_models.py --check
+
+# Download weights into an existing setup, without compiling or requiring a GPU.
+uv run --no-sync python scripts/install_models.py --download-only
+
+# Optional: preview selected download sizes without downloading.
+uv run --no-sync python scripts/install_models.py --download-only --dry-run
+
+# Start the viewer's synthetic demo; no checkpoints needed.
+uv run --no-sync ontic-backbone-viewer --demo --device cpu --host 127.0.0.1
+```
+
+For a machine without a CUDA toolkit, `--skip-cuda-build` makes a **partial**
+installation: TAPIP3D's extension and readiness check are skipped. You can also
+select `--group backbones` or `--group trackers`. See
+[model installation](packages/ontic-nn/README.md#model-installation) for source
+locations, weights, CPU limitations, and preserving a custom runtime.
+
+## Optional dependencies
+
+Nothing is picked up implicitly: accelerators and format backends are explicit
+extras, imported lazily by the function that needs them and raising an
+`ImportError` naming the extra when missing.
+
+| Extra | Package | Enables |
+| --- | --- | --- |
+| `ontic-lib[wandb]` | `wandb` | `tracking`: mirror metrics to Weights & Biases |
+| `ontic-lib[e3nn]` | `e3nn` | `splats.sh`: spherical-harmonic rotation |
+| `ontic-lib[gsplat]` | `gsplat` | `splats.rendering`: CUDA rasterization |
+| `ontic-lib[cute]` | `gsplat`, `nvidia-cutlass-dsl` | `splats.cute`: batched CuTeDSL rasterizer |
+| `ontic-lib[safetensors]` | `safetensors` | `io`: `.safetensors` files |
+| `ontic-lib[ply]` | `plyfile` | `io`: `.ply` (3DGS layout) files |
+| `ontic-nn[spconv]` | `spconv-cu120` (Python < 3.12) | PTv3 sparse-conv CPE/stem backend (`conv_impl="spconv"`) |
+| `ontic-nn[timm]` | `timm` | Alternative DINOv2 pretrained-weight loading |
+
+`flash-attn` (PTv3 `attention.backend="flash"`) must be built against the
+local torch and is installed manually, not as an extra. `ontic-data` and
+`ontic-viz` list their own backend extras in their `pyproject.toml`.
+
+The vendored CUDA extensions under `ext/` (`pointops`, `point_rope`,
+`point_serialization`) are built separately with
+`./scripts/install_cuda_ext.sh` — see [CUDA extensions](#cuda-extensions-optional).
+
 ## What belongs here
 
 `ontic-lib` is for code that has proven itself across experiments, not for
@@ -15,10 +120,9 @@ one-off experiment logic. Concretely:
 - **Dataset loaders** — data loading/preprocessing code shared by more than
   one experiment.
 - **Cross-cutting infrastructure**, such as the tracking shim in
-  `ontic_lib.tracking`, which fans out metric logging to
-  [trackio](https://pypi.org/project/trackio/) (always) and Weights & Biases
-  (best-effort, optional) so training runs never crash because a metrics
-  SaaS is down.
+  `ontic_lib.tracking`, which writes metrics to a local JSON-lines file
+  (always) and mirrors them to Weights & Biases (best-effort, optional) so
+  training runs never crash because a metrics SaaS is down.
 
 ## The promotion rule
 
@@ -45,9 +149,11 @@ tracker.log({"loss": 1.0}, step=1)
 tracker.finish()
 ```
 
-- Always logs to `trackio`. `TRACKIO_DIR` defaults to `./output` (relative
-  to the current working directory) so the metrics DB lands inside the job
-  record; set `TRACKIO_DIR` explicitly beforehand to override.
+- Always appends one JSON line per `log()` call to `./output/metrics.jsonl`
+  (relative to the current working directory, so the record lands inside the
+  job record); the file is flushed per line and any byte prefix of it is a
+  valid record set. `tracking.read_metrics(path)` reads it back, skipping a
+  truncated final line.
 - Additionally logs to Weights & Biases iff all of the following hold:
   - `wandb` is importable (install the `wandb` extra: `pip install
     ontic-lib[wandb]`),
@@ -134,10 +240,17 @@ distance.
   image grids), `camera.rays` (world rays, world-space pixel size).
 - `pointops` — batched tensor ops: `pointops.sampling` (voxel pooling, furthest-point
   sampling, space-filling-curve striding), `pointops.serialization` (Morton and
-  Hilbert codes for integer grids), `pointops.alignment` (Umeyama-style
-  SE(3)/Sim(3) alignment of camera trajectories and point sets),
-  `pointops.pointcloud` (`PointCloud` container, AABB crop, depth-views →
-  point-cloud construction).
+  Hilbert codes for integer grids), `pointops.packing` (packed "offset" layout
+  ↔ padded tensors), `pointops.grid` (voxel coords, cluster reductions),
+  `pointops.alignment` (Umeyama-style SE(3)/Sim(3) alignment of camera
+  trajectories and point sets).
+- `structures` — data containers: `PointCloud` (with AABB crop and depth-views →
+  point-cloud construction), `PointBatch` (packed per-group point layout), and
+  `Gaussians` (batched 3D Gaussians: means/scales/wxyz rotations/opacities/SH,
+  optional mask and extras, `covariance()`, batch indexing and flattening).
+- `io` — `save_gaussians` / `load_gaussians`, format by suffix: `.npz` (core,
+  exact round trip), `.safetensors` (exact; `safetensors` extra), `.ply`
+  (standard 3DGS vertex layout, unbatched only, no mask/extras; `ply` extra).
 - `splats` — 3D Gaussian-splatting helpers: `splats.gaussians` (covariance
   construction), `splats.sh` (rotation of real-SH coefficient bands; `e3nn`
   extra), and `splats.rendering` (`render_gaussians`: one scene into `V`
@@ -149,7 +262,9 @@ distance.
   that batches all (scene, camera) pairs into one launch per stage; its
   `batched_render` also takes `B` scenes x `C` cameras directly. `cute` extra
   (gsplat + nvidia-cutlass-dsl); post-activation colors + uniform near/far
-  only; needs a CUDA-13-era driver.
+  only (no SH — dispatchers gating on this fall back to gsplat silently, e.g.
+  fwomo-3d's `GSPLAT_CUTE=1` with an `sh_degree` config); needs a CUDA-13-era
+  driver.
 
 ## Depth
 

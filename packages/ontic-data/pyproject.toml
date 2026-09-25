@@ -1,0 +1,33 @@
+[project]
+name = "ontic-data"
+version = "0.5.0"
+description = "Ontic dataset loaders: example schema, view sampling, collate, temporal scene datasets"
+requires-python = ">=3.10"
+dependencies = [
+    "ontic-lib",
+    "torch>=2.4",
+    "numpy>=1.24",
+    "einops>=0.7",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+video = ["torchcodec>=0.1"]                        # VideoReader(backend="torchcodec"): taco, dextris, synthrobot
+decord = ["decord>=0.6; python_version < '3.12'"]  # VideoReader(backend="decord") (no wheels for 3.12+)
+hdf5 = ["h5py>=3.10"]                              # synthrobot trajectory stores
+opencv = ["opencv-python-headless>=4.8"]           # hand overlays, hocap frames, robot-dextris video
+hocap = ["ontic-data[hdf5,opencv]", "scipy>=1.11"]
+tables = ["pandas>=2.0"]                           # taco_info.csv, dextris/physinone meta CSVs
+images = ["pillow>=10"]                            # genesis, physinone frames
+robot = ["mujoco>=3.1"]                            # ontic_data.robot kinematics (synthrobot robot_points)
+all = ["ontic-data[video,hdf5,opencv,hocap,tables,images,robot]"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ontic_data"]
+
+[tool.uv.sources]
+ontic-lib = { workspace = true }

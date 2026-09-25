@@ -6,3 +6,6 @@ __pycache__/
 .DS_Store
 *.so
 build/
+
+# Local source recordings; keep large capture archives outside version control.
+/teleop_franka_recordings-*.zip

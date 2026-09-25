@@ -1,3 +1,5 @@
+"""Step-indexed checkpoints: atomic writes, a ``latest.json`` pointer, ``keep_last`` pruning."""
+
 from __future__ import annotations
 
 import json

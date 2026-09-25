@@ -1,0 +1,68 @@
+[
+  {
+    "name": "velodepth",
+    "url": "https://github.com/lpiccinelli-eth/velodepth.git",
+    "revision": "fcb9a899ba6fdb960f8ff5fb3ad81d0ac22f49b2",
+    "path": "."
+  },
+  {
+    "name": "video-depth-anything",
+    "url": "https://github.com/DepthAnything/Video-Depth-Anything.git",
+    "revision": "4f5ae23172ba60fd7bc11ef671cca678842c7072",
+    "path": "."
+  },
+  {
+    "name": "depth-anything-3",
+    "url": "https://github.com/ByteDance-Seed/Depth-Anything-3.git",
+    "revision": "2c21ea849ceec7b469a3e62ea0c0e270afc3281a",
+    "path": "src"
+  },
+  {
+    "name": "mapanything",
+    "url": "https://github.com/facebookresearch/map-anything.git",
+    "revision": "f065d13383ae84a7f80f0e0104a4d12afc7c7c82",
+    "path": "."
+  },
+  {
+    "name": "uniception",
+    "url": "https://github.com/castacks/UniCeption.git",
+    "revision": "ee7fa0b50d8295b3f0485e42c1d133fb534bfce7",
+    "path": "."
+  },
+  {
+    "name": "vggt-omega",
+    "url": "https://github.com/facebookresearch/vggt-omega.git",
+    "revision": "cdddb0f9daa9b3586291001d0d9d30242c034ef9",
+    "path": "."
+  },
+  {
+    "name": "pi3",
+    "url": "https://github.com/yyfz/Pi3.git",
+    "revision": "9fa3ddb3f8d53041f8b2738df404f62223bbaa7b",
+    "path": "."
+  },
+  {
+    "name": "dvlt",
+    "url": "https://github.com/nv-tlabs/dvlt.git",
+    "revision": "134b21f2af02d98039e79ab5dd48f36dc8123c97",
+    "path": "src"
+  },
+  {
+    "name": "moge",
+    "url": "https://github.com/microsoft/MoGe.git",
+    "revision": "74fbce054ebed49800de42d0ad0e83495065719a",
+    "path": "."
+  },
+  {
+    "name": "utils3d-moge",
+    "url": "https://github.com/EasternJournalist/utils3d-moge.git",
+    "revision": "62f09d58509485564e24d5d9f6aac9ee9ebc0c37",
+    "path": "."
+  },
+  {
+    "name": "flex-gemm",
+    "url": "https://github.com/JeffreyXiang/FlexGEMM.git",
+    "revision": "b2fadb29d41846c7981ade6801ffc689fae119cf",
+    "path": "."
+  }
+]

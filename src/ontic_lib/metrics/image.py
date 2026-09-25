@@ -1,3 +1,5 @@
+"""Per-image PSNR / SSIM / LPIPS helpers and the scalar ``psnr`` compatibility API."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
