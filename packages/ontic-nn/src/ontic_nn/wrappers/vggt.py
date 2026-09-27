@@ -118,6 +118,9 @@ class VGGTBackbone(BackboneBase):
         intrinsics: Optional[Tensor] = None,
         depth: Optional[Tensor] = None,
     ) -> BackboneOutput:
+        """Sub-modules get autograd only when trainable *and* the caller has it enabled: an outer
+        ``no_grad`` (validation) is never overridden, so no graph outlives the step.
+        """
         pose_enc_mod = import_research_module(
             "vggt_omega.utils.pose_enc", extra="vggt", repo_url=VGGT_REPO_URL, what="VGGTBackbone"
         )
@@ -128,7 +131,7 @@ class VGGTBackbone(BackboneBase):
 
         with (
             torch.autocast(device_type, dtype=amp_dtype()),
-            torch.set_grad_enabled(not self.cfg.freeze_backbone),
+            torch.set_grad_enabled(not self.cfg.freeze_backbone and torch.is_grad_enabled()),
         ):
             tokens_list, patch_token_start = self.vggt.aggregator(images)
 
@@ -145,7 +148,7 @@ class VGGTBackbone(BackboneBase):
 
         with (
             torch.autocast(device_type, enabled=False),
-            torch.set_grad_enabled(not self.cfg.freeze_dpt_head),
+            torch.set_grad_enabled(not self.cfg.freeze_dpt_head and torch.is_grad_enabled()),
         ):
             pred_depth, depth_conf = self.vggt.dense_head(
                 tokens_list, images=images, patch_token_start=patch_token_start
@@ -154,7 +157,7 @@ class VGGTBackbone(BackboneBase):
 
         with (
             torch.autocast(device_type, enabled=False),
-            torch.set_grad_enabled(not self.cfg.freeze_cam_dec),
+            torch.set_grad_enabled(not self.cfg.freeze_cam_dec and torch.is_grad_enabled()),
         ):
             pose_enc = self.vggt.camera_head(tokens_list, patch_token_start=patch_token_start)
         w2c, k_px = pose_enc_mod.encoding_to_camera(pose_enc, image_size_hw=(h, w))

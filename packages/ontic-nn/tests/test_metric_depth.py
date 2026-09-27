@@ -36,7 +36,12 @@ def test_config_defaults(name):
 
 @pytest.mark.parametrize("name", sorted(RESEARCH_MODULES))
 def test_build_without_research_repo_names_extra(name, monkeypatch):
-    monkeypatch.setitem(sys.modules, RESEARCH_MODULES[name], None)
+    # Earlier tests may have imported the package: drop its cached submodules too, or the
+    # import inside build() is served from sys.modules and never fails.
+    top = RESEARCH_MODULES[name]
+    for key in [k for k in sys.modules if k == top or k.startswith(top + ".")]:
+        monkeypatch.delitem(sys.modules, key)
+    monkeypatch.setitem(sys.modules, top, None)
     with pytest.raises(ImportError, match=rf"ontic-nn\[{name}\]"):
         METRIC_MODELS[name]().build()
 

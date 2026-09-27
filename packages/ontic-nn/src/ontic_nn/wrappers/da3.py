@@ -185,14 +185,18 @@ class DA3Backbone(BackboneBase):
     def _run_backbone(
         self, imgs_norm: Tensor, w2c_norm: Optional[Tensor], k_px: Optional[Tensor]
     ) -> List[Tuple[Tensor, Tensor]]:
-        """ViT with camera-token injection → list of ``(patch_tokens, cam_token)`` per tap."""
+        """ViT with camera-token injection → list of ``(patch_tokens, cam_token)`` per tap.
+
+        A trainable camera encoder records a graph only while autograd is already on: an
+        outer ``no_grad`` (validation) is never overridden.
+        """
         net = self._net()
         h, w = imgs_norm.shape[-2:]
         cam_token = None
         if w2c_norm is not None and net.cam_enc is not None:
             with (
                 torch.autocast(device_type=imgs_norm.device.type, enabled=False),
-                torch.set_grad_enabled(not self.cfg.freeze_cam_enc),
+                torch.set_grad_enabled(not self.cfg.freeze_cam_enc and torch.is_grad_enabled()),
             ):
                 cam_token = net.cam_enc(w2c_norm, k_px, (h, w))
         with torch.inference_mode(self.cfg.freeze_backbone):
