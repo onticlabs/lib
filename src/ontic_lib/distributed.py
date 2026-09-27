@@ -1,9 +1,13 @@
-"""Hang-safe averaging of a training ``log_dict`` across DDP ranks.
+"""Multi-process training helpers for ``torchrun`` launches.
 
-The single export, `avg_log_dict_across_ranks`, sits in the shared train/val
-log path of a training loop so every wrapper's `log_dict` is reduced the same way.
+`setup` reads torchrun's environment and initialises the process group; `sync_gradients`
+averages gradients once per optimizer step for loops that cannot be wrapped in
+``DistributedDataParallel`` (several backward passes per step, as in chunked rollouts);
+`broadcast_module` and `broadcast_flag` pin rank 0's state; `avg_log_dict_across_ranks`
+averages a training ``log_dict`` hang-safely. Every helper is a no-op in a single process, so
+a one-GPU run is the ``world_size == 1`` case of the same training code.
 
-Design goals:
+Design goals of `avg_log_dict_across_ranks`:
 
 * **No wrapper-side changes**: each wrapper's `training_step` / `validation_step`
   returns its log_dict as before. The all-reduce happens in the shared caller.
@@ -20,18 +24,127 @@ Design goals:
   rank-0 viz artifacts like `wandb.Image`.
 * **One batched all-reduce for scalars** instead of one collective per key,
   since NVS's debug logging adds dozens of scalar entries per step.
+* **SUM then divide** rather than ``ReduceOp.AVG``, which the gloo backend lacks.
 """
 
 from __future__ import annotations
 
-from typing import Any
+import datetime
+import os
+from typing import Any, Iterable
 
 import torch
 import torch.distributed as dist
+from torch import nn
 
 
-def _is_distributed() -> bool:
+def is_distributed() -> bool:
     return dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
+
+
+_is_distributed = is_distributed
+
+
+def is_main() -> bool:
+    """True on rank 0 and in a single process: the rank that logs, validates and saves."""
+    return not is_distributed() or dist.get_rank() == 0
+
+
+def rank() -> int:
+    return dist.get_rank() if is_distributed() else 0
+
+
+def world_size() -> int:
+    return dist.get_world_size() if is_distributed() else 1
+
+
+def dist_device() -> torch.device:
+    """Where collectives put their scratch tensors: the current GPU under NCCL, the CPU otherwise."""
+    if is_distributed() and dist.get_backend() == "nccl":
+        return torch.device("cuda", torch.cuda.current_device())
+    return torch.device("cpu")
+
+
+def setup(
+    backend: str | None = None,
+    timeout: datetime.timedelta = datetime.timedelta(hours=2),
+) -> tuple[int, int]:
+    """``(rank, world_size)``, initialising the process group from torchrun's environment.
+
+    A plain ``python train.py`` (no ``WORLD_SIZE``, or ``WORLD_SIZE=1``) gets ``(0, 1)`` and
+    no process group. Otherwise ``RANK``, ``LOCAL_RANK``, ``MASTER_ADDR`` and ``MASTER_PORT``
+    are read by ``init_process_group``; under NCCL (the default with CUDA) the current device is
+    set to ``LOCAL_RANK`` first. The long default timeout covers rank 0 running a validation
+    while the other ranks wait at the next collective.
+    """
+    if int(os.environ.get("WORLD_SIZE", "1")) <= 1:
+        return 0, 1
+    if backend is None:
+        backend = "nccl" if torch.cuda.is_available() else "gloo"
+    if backend == "nccl":
+        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+    dist.init_process_group(backend=backend, timeout=timeout)
+    return dist.get_rank(), dist.get_world_size()
+
+
+def teardown() -> None:
+    """Barrier, then destroy the process group; a no-op without one."""
+    if dist.is_available() and dist.is_initialized():
+        dist.barrier()
+        dist.destroy_process_group()
+
+
+def barrier() -> None:
+    if is_distributed():
+        dist.barrier()
+
+
+def broadcast_module(module: nn.Module, src: int = 0) -> None:
+    """Parameters and buffers of ``src`` to every rank (ranks built from the same seed and files
+    should agree already; this pins it, and it is what makes a resumed run identical on all ranks)."""
+    if not is_distributed():
+        return
+    for t in list(module.parameters()) + list(module.buffers()):
+        dist.broadcast(t.data, src=src)
+
+
+def sync_gradients(module_or_params: nn.Module | Iterable[nn.Parameter], *, average: bool = True) -> None:
+    """Sum, and by default average, the gradients of the trainable parameters across ranks.
+
+    One all-reduce per (dtype, device) group over a flattened copy, then written back into
+    ``p.grad``. A parameter without a gradient on this rank contributes zeros and receives the
+    result, so the ranks end the call with identical gradients. Call it after the last backward
+    pass of a step and before clipping and the optimizer step.
+    """
+    if not is_distributed():
+        return
+    params = module_or_params.parameters() if isinstance(module_or_params, nn.Module) else module_or_params
+    groups: dict[tuple[torch.dtype, torch.device], list[nn.Parameter]] = {}
+    for p in params:
+        if p.requires_grad:
+            groups.setdefault((p.dtype, p.device), []).append(p)
+    world = dist.get_world_size()
+    for group in groups.values():
+        grads = [p.grad if p.grad is not None else torch.zeros_like(p) for p in group]
+        flat = torch.cat([g.reshape(-1) for g in grads])
+        dist.all_reduce(flat, op=dist.ReduceOp.SUM)
+        if average:
+            flat.div_(world)
+        for p, g in zip(group, torch.split(flat, [g.numel() for g in grads])):
+            if p.grad is None:
+                p.grad = g.view_as(p).clone()
+            else:
+                p.grad.copy_(g.view_as(p))
+
+
+def broadcast_flag(flag: bool, src: int = 0) -> bool:
+    """``src``'s boolean on every rank: for decisions taken on one rank that every rank must
+    follow, such as leaving the training loop on a wall-clock budget."""
+    if not is_distributed():
+        return bool(flag)
+    t = torch.tensor([int(bool(flag))], device=dist_device())
+    dist.broadcast(t, src=src)
+    return bool(t.item())
 
 
 def _classify(log_dict: dict) -> tuple[set[str], dict[str, tuple[int, ...]]]:
@@ -66,10 +179,10 @@ def avg_log_dict_across_ranks(log_dict: dict) -> dict:
 
     On a non-distributed run, this is a shallow-copy passthrough.
     """
-    if not _is_distributed():
+    if not is_distributed():
         return dict(log_dict)
 
-    default_device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    default_device = dist_device()
 
     # Start from a shallow copy: any key/value not touched below survives as-is.
     out: dict[str, Any] = dict(log_dict)
@@ -79,8 +192,8 @@ def avg_log_dict_across_ranks(log_dict: dict) -> dict:
     # Sync key sets + tensor shapes so all ranks agree on what to reduce. Use
     # all_gather_object once instead of one collective per key — cheaper, and
     # the only way to detect a key/shape that exists on a strict subset of ranks.
-    world_size = dist.get_world_size()
-    gathered: list[Any] = [None] * world_size
+    world = dist.get_world_size()
+    gathered: list[Any] = [None] * world
     dist.all_gather_object(gathered, (local_scalars, local_tensors))
 
     common_scalars = sorted(set.intersection(*[g[0] for g in gathered]))
@@ -95,7 +208,8 @@ def avg_log_dict_across_ranks(log_dict: dict) -> dict:
             device=default_device,
             dtype=torch.float32,
         )
-        dist.all_reduce(scalar_tensor, op=dist.ReduceOp.AVG)
+        dist.all_reduce(scalar_tensor, op=dist.ReduceOp.SUM)  # SUM then divide: gloo has no AVG
+        scalar_tensor.div_(world)
         for k, v in zip(common_scalars, scalar_tensor.tolist()):
             out[k] = v
 
@@ -103,7 +217,7 @@ def avg_log_dict_across_ranks(log_dict: dict) -> dict:
     for k in common_tensors:
         v = log_dict[k]
         t = v.detach().to(default_device, copy=False).float().clone()
-        dist.all_reduce(t, op=dist.ReduceOp.AVG)
-        out[k] = t.to(v.device)
+        dist.all_reduce(t, op=dist.ReduceOp.SUM)
+        out[k] = t.div_(world).to(v.device)
 
     return out

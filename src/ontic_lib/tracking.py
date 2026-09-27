@@ -1,4 +1,20 @@
-"""Metrics tracking: JSON lines under ``./output/metrics.jsonl`` plus best-effort W&B mirroring."""
+"""Metrics tracking: JSON lines under ``./output/metrics.jsonl`` plus best-effort W&B and
+Olympus mirroring, and a direct Olympus API for runs that manage their own identity.
+
+Two ways of reaching Olympus live here and must not be mixed in one process:
+
+* :func:`init` -> :class:`Tracker`: for runs launched by the ontic job bootstrap. The run's
+  identity comes from the environment (``ONTIC_OLYMPUS_PROJECT`` / ``ONTIC_OLYMPUS_RUN``),
+  metrics.jsonl is the durable record, and the mirror's worker thread owns every SDK call
+  so the training loop never waits on the server.
+* :func:`init_run` / :func:`run_log` / :func:`finish_run` plus the media adapters
+  (:func:`image`, :func:`video`, :func:`point_cloud`, :func:`histogram`, :func:`html`,
+  :func:`figure`): for interactive sessions and HTCondor jobs that pick their own project
+  and run name. The calling thread drives the SDK directly. ``OLYMPUS_DATA_DIR`` is read
+  once, when olympus is imported, so :func:`set_storage_dir` has to run first; reaching
+  every olympus symbol through :func:`olympus` (lazy) makes that ordering hold by
+  construction. Nothing here imports olympus, numpy or torch at module import time.
+"""
 
 from __future__ import annotations
 
@@ -10,8 +26,11 @@ import threading
 import time
 import traceback
 import urllib.request
+import warnings
 from collections import deque
 from pathlib import Path
+
+from .deps import optional_import
 
 _OLYMPUS_STOP_POLL_S = 5.0
 _OLYMPUS_TAIL_FLUSH_S = 15.0
@@ -559,3 +578,207 @@ def init(project: str, config: dict | None = None) -> Tracker:
     return Tracker(
         fh, _maybe_wandb(project, config), olympus_mirror=_maybe_olympus(config, out), out=out
     )
+
+
+# --- Direct Olympus API: the calling thread drives the SDK --------------------
+
+
+def olympus():
+    """The olympus SDK module, imported on first use (after `set_storage_dir`)."""
+    return optional_import(
+        "olympus",
+        package="ontic-lib",
+        extra="olympus",
+        what="tracking's direct Olympus API",
+        repo_url="ssh://git@github.com/onticlabs/olympus.git",
+    )
+
+
+def active_run():
+    """The SDK's current run, or None. Never imports olympus itself."""
+    sdk = sys.modules.get("olympus")
+    if sdk is None:
+        return None
+    return sdk.context_vars.current_run.get()
+
+
+def set_storage_dir(output_dir: str | Path) -> Path:
+    """Put the local run store under ``<output_dir>/olympus`` unless ``OLYMPUS_DATA_DIR``
+    is set; returns the directory in effect. Must run before olympus is imported (the
+    SDK reads the variable once); warns and keeps the already-bound directory otherwise."""
+    explicit = os.environ.get("OLYMPUS_DATA_DIR")
+    if explicit:
+        return Path(explicit)
+    target = (Path(output_dir) / "olympus").resolve()
+    sdk = sys.modules.get("olympus")
+    if sdk is not None:
+        bound = sdk.utils.OLYMPUS_DATA_DIR
+        warnings.warn(
+            f"olympus was already imported; run store stays at {bound} instead of {target}. "
+            "Export OLYMPUS_DATA_DIR to choose it explicitly.",
+            stacklevel=2,
+        )
+        return Path(bound)
+    target.mkdir(parents=True, exist_ok=True)
+    os.environ["OLYMPUS_DATA_DIR"] = str(target)
+    return target
+
+
+def init_run(
+    project: str,
+    name: str,
+    *,
+    group: str | None = None,
+    server_url: str | None = None,
+    config: dict | None = None,
+    resume: str = "allow",
+    system_metrics: bool = True,
+    system_interval: float = 10.0,
+    storage_dir: str | Path | None = None,
+):
+    """Start (or resume) an Olympus run from the calling thread; returns the SDK run.
+
+    Resume keys on the run *name* (olympus has no separately addressable run id), so
+    ``name`` must be a pure function of the caller's config for a restarted job to land
+    back on the same run. ``storage_dir`` goes through :func:`set_storage_dir` first.
+    System metrics (GPU via nvidia-ml-py, CPU/RAM via psutil) are sampled on an SDK
+    background thread every ``system_interval`` seconds; a missing dependency silently
+    disables its half."""
+    if storage_dir is not None:
+        set_storage_dir(storage_dir)
+    return olympus().init(
+        project=project,
+        name=name,
+        group=group or None,
+        server_url=server_url or None,
+        config=config,
+        resume=resume,
+        embed=False,
+        auto_log_gpu=system_metrics,
+        gpu_log_interval=system_interval,
+        auto_log_cpu=system_metrics,
+        cpu_log_interval=system_interval,
+    )
+
+
+def finish_run() -> None:
+    """Finish the run started by `init_run`."""
+    olympus().finish()
+
+
+def run_log(metrics: dict, step: int | None = None) -> None:
+    """Log scalars and media objects on the run started by `init_run`."""
+    olympus().log(metrics, step=step)
+
+
+def ensure_ffmpeg() -> str | None:
+    """A *working* `ffmpeg` on PATH, borrowing imageio-ffmpeg's static build if needed.
+
+    olympus encodes video by shelling out to `ffmpeg`, and some container images ship
+    without it or with a build that cannot run (`ffmpeg -version` fails). Such a binary
+    is ignored in favour of the static one imageio-ffmpeg carries under a versioned
+    name, linked in as `ffmpeg` under ``$OLYMPUS_DATA_DIR/bin`` (else
+    ``~/.cache/olympus/bin``) and prepended to PATH. Returns the resolved path, or None
+    when no runnable binary can be found."""
+    import shutil
+    import subprocess
+
+    def runs(exe: str) -> bool:
+        try:
+            proc = subprocess.run([exe, "-version"], capture_output=True, timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return proc.returncode == 0
+
+    found = shutil.which("ffmpeg")
+    if found and runs(found):
+        return found
+    try:
+        import imageio_ffmpeg
+    except ImportError:
+        return None
+    exe = Path(imageio_ffmpeg.get_ffmpeg_exe())
+    if not exe.exists():
+        return None
+    bindir = Path(os.environ.get("OLYMPUS_DATA_DIR", Path.home() / ".cache" / "olympus")) / "bin"
+    bindir.mkdir(parents=True, exist_ok=True)
+    link = bindir / "ffmpeg"
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    try:
+        link.symlink_to(exe)
+    except OSError:
+        return None
+    os.environ["PATH"] = f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}"
+    return str(link) if runs(str(link)) else None
+
+
+# -- media adapters: tensors and arrays in, olympus media objects out ----------
+
+
+def image(img, caption: str | None = None):
+    """CHW float tensor in [0, 1] (or HWC uint8 array) -> `olympus.Image`."""
+    import numpy as np
+
+    torch = sys.modules.get("torch")  # a tensor argument implies torch is already loaded
+    if torch is not None and isinstance(img, torch.Tensor):
+        arr = img.detach().clamp(0, 1).mul(255).round().to(torch.uint8).cpu().numpy()
+        if arr.ndim == 3 and arr.shape[0] in (1, 3, 4):
+            arr = np.transpose(arr, (1, 2, 0))
+        if arr.ndim == 3 and arr.shape[-1] == 1:
+            arr = arr[..., 0]
+    else:
+        arr = np.asarray(img)
+        if arr.dtype != np.uint8:
+            arr = (np.clip(arr, 0, 1) * 255).round().astype(np.uint8)
+    return olympus().Image(np.ascontiguousarray(arr), caption=caption)
+
+
+def video(frames, fps: int = 30, caption: str | None = None, fmt: str = "mp4"):
+    """uint8 frames shaped (F, C, H, W) or (B, F, C, H, W) -> `olympus.Video`. Makes sure
+    a working `ffmpeg` is on PATH first (see `ensure_ffmpeg`)."""
+    import numpy as np
+
+    ensure_ffmpeg()
+    arr = np.ascontiguousarray(np.asarray(frames))
+    if arr.dtype != np.uint8:
+        arr = arr.astype(np.uint8)
+    return olympus().Video(arr, caption=caption, fps=fps, format=fmt)
+
+
+def point_cloud(vertex_data, caption: str | None = None):
+    """(N, 3) xyz or (N, 6) xyz+rgb -> `olympus.Object3D`.
+
+    Also accepts a PLY-style structured array (`x/y/z/red/green/blue` fields). RGB is
+    rounded and clipped into the integer [0, 255] range olympus requires; olympus itself
+    thins anything past its own point cap."""
+    import numpy as np
+
+    arr = np.asarray(vertex_data)
+    if arr.dtype.names:
+        arr = np.stack([arr[n] for n in arr.dtype.names], axis=-1)
+    arr = arr.astype(np.float32)
+    if arr.shape[-1] >= 6:
+        arr = arr[:, :6].copy()
+        arr[:, 3:6] = np.clip(np.round(arr[:, 3:6]), 0, 255)
+    else:
+        arr = arr[:, :3].copy()
+    return olympus().Object3D(np.ascontiguousarray(arr), caption=caption)
+
+
+def histogram(values, num_bins: int = 64):
+    """Any array-like, flattened -> `olympus.Histogram`."""
+    import numpy as np
+
+    return olympus().Histogram(np.asarray(values).reshape(-1), num_bins=num_bins)
+
+
+def html(markup: str, caption: str | None = None):
+    """An HTML string -> `olympus.Html`."""
+    return olympus().Html(markup, caption=caption)
+
+
+def figure(fig, caption: str | None = None):
+    """A matplotlib or plotly figure -> `olympus.Html`, which renders it (olympus has no
+    Image-from-figure)."""
+    return olympus().Html(fig, caption=caption)

@@ -17,6 +17,9 @@ dependencies = [
 [project.optional-dependencies]
 rerun = ["rerun-sdk>=0.38,<0.39"]  # optional headless tracking recordings
 robot = ["mujoco>=3.1"]  # robot model overlay in the backbone viewer
+images = ["pillow>=10"]  # validation: text labels and PNG output
+video = ["moviepy>=1.0.3,<2"]  # validation: LocalVizLogger MP4 videos
+ply = ["plyfile>=1.0"]  # validation: LocalVizLogger PLY point clouds
 
 [project.scripts]
 ontic-backbone-viewer = "ontic_viz.backbone_viewer.cli:main"

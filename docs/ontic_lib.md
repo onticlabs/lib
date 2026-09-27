@@ -199,5 +199,14 @@ Training infrastructure at the top level, all framework-agnostic.
 | --- | --- | --- |
 | `tracking.init(project, config)` → `Tracker` | Append one JSON line per `log()` to `./output/metrics.jsonl` (fsync-coalesced); mirrors to W&B best-effort iff `ONTIC_WANDB_RUN_ID` and credentials are set | `wandb` (optional) |
 | `tracking.read_metrics` | Decode a `metrics.jsonl`, skipping a truncated last line | |
+| `tracking.init_run(project, name, ...)` → run | Start or resume an Olympus run from the calling thread, for interactive / HTCondor runs that pick their own project and name (resume keys on the name; `storage_dir` binds the local store first). Not for ontic-launched jobs, which use `init`; the two never mix in one process | `olympus` |
+| `tracking.run_log(metrics, step)` / `tracking.finish_run()` | Log a dict (scalars or media objects) on / finish the run started by `init_run` | `olympus` |
+| `tracking.set_storage_dir(output_dir)` → `Path` | Bind the local Olympus store to `<output_dir>/olympus` unless `OLYMPUS_DATA_DIR` is set; must run before olympus is imported (warns and keeps the bound dir otherwise) | |
+| `tracking.active_run()` / `tracking.olympus()` | The SDK's current run or None (never imports olympus) / the SDK module, imported on first use | `olympus` |
+| `tracking.image` / `video` / `point_cloud` / `histogram` / `html` / `figure` | Tensors and arrays in, olympus media objects out: CHW float in [0, 1] or HWC uint8 image; uint8 `(F, C, H, W)` / `(B, F, C, H, W)` frames (ensures ffmpeg); `(N, 3)` xyz, `(N, 6)` xyz+rgb or a PLY structured array; flattened histogram values; HTML markup; a matplotlib or plotly figure | `olympus` |
+| `tracking.ensure_ffmpeg()` → path or None | A working `ffmpeg` on PATH, else imageio-ffmpeg's static build linked under `$OLYMPUS_DATA_DIR/bin` (or `~/.cache/olympus/bin`) | `imageio-ffmpeg` (optional) |
 | `checkpoint.CheckpointManager` | Atomic `save(step, state)`, `resume()`, `latest_step`, `keep_last` pruning; pluggable `save_fn` / `load_fn` (default pickle) | |
 | `distributed.avg_log_dict_across_ranks` | Hang-safe DDP average of a metric dict (key intersection only, one batched all-reduce) | |
+| `distributed.setup` / `teardown` | `(rank, world_size)` from torchrun's environment, NCCL (or gloo) process group; `(0, 1)` and no group for a plain `python train.py` | |
+| `distributed.sync_gradients` | Average the trainable gradients across ranks after the last backward of a step, one all-reduce per dtype; for loops with several backward passes per step that cannot use `DistributedDataParallel` | |
+| `distributed.broadcast_module` / `broadcast_flag` / `is_main` / `barrier` | Rank 0's weights and decisions on every rank; the rank that logs and saves | |

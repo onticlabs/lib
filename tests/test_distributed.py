@@ -56,3 +56,68 @@ def test_classify_splits_reducible_from_passthrough():
 def test_passthrough_preserves_empty_dict():
     out = avg_log_dict_across_ranks({})
     assert out == {}
+
+
+# --- two processes over gloo on the CPU: the collectives themselves ---------------------
+
+import datetime  # noqa: E402
+import os  # noqa: E402
+import socket  # noqa: E402
+
+import torch.multiprocessing as mp  # noqa: E402
+
+from ontic_lib import distributed  # noqa: E402
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _worker(rank: int, world: int, port: int) -> None:
+    os.environ.update(
+        MASTER_ADDR="127.0.0.1", MASTER_PORT=str(port), WORLD_SIZE=str(world), RANK=str(rank), LOCAL_RANK=str(rank)
+    )
+    assert distributed.setup(backend="gloo", timeout=datetime.timedelta(seconds=120)) == (rank, world)
+    assert distributed.is_distributed()
+    assert distributed.is_main() == (rank == 0)
+    assert (distributed.rank(), distributed.world_size()) == (rank, world)
+    assert distributed.dist_device().type == "cpu"
+
+    torch.manual_seed(0)
+    net = torch.nn.Linear(4, 2)
+    torch.manual_seed(0)
+    reference = torch.nn.Linear(4, 2)  # what rank 0 holds
+    if rank != 0:
+        with torch.no_grad():
+            net.weight.add_(1.0)
+    distributed.broadcast_module(net)
+    torch.testing.assert_close(net.weight, reference.weight)
+
+    net.weight.grad = torch.full_like(net.weight, float(rank + 1))  # ranks 1, 2, ... -> mean 1.5 for two
+    net.bias.grad = torch.ones_like(net.bias) if rank == 0 else None  # a missing grad counts as zeros
+    distributed.sync_gradients(net)
+    torch.testing.assert_close(net.weight.grad, torch.full_like(net.weight, (world + 1) / 2))
+    torch.testing.assert_close(net.bias.grad, torch.full_like(net.bias, 1.0 / world))
+
+    assert distributed.broadcast_flag(rank == 0) is True
+    assert distributed.broadcast_flag(rank != 0) is False
+
+    log = {"loss": float(rank), "t": torch.tensor([float(rank)]), "name": "train", "n": rank, "ok": True}
+    if rank == 0:
+        log["img"] = "rank-0 only"
+    out = distributed.avg_log_dict_across_ranks(log)
+    expected = (world - 1) / 2
+    assert out["loss"] == expected and out["n"] == expected
+    assert out["name"] == "train" and out["ok"] is True
+    torch.testing.assert_close(out["t"], torch.tensor([expected]))
+    assert ("img" in out) == (rank == 0)
+    assert log["loss"] == float(rank)  # the input is not mutated
+
+    distributed.teardown()
+    assert not distributed.is_distributed()
+
+
+def test_two_process_gloo():
+    mp.spawn(_worker, args=(2, _free_port()), nprocs=2, join=True)
