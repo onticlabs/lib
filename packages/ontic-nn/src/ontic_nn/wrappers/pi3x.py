@@ -4,15 +4,21 @@ Calls the real ``Pi3X.forward`` (conditioned on GT cameras when ``use_multimodal
 four decoder layers with forward hooks for the hierarchical patch features. Depth is the z
 component of the predicted local point map; the sigmoid-logit confidence is exposed as
 ``1 + exp(logit)`` to match the ``expp1`` convention.
+
+Autograd is enabled only when something is trainable *and* the caller has it enabled, the
+encoder / decoder blocks are checkpointed when ``gradient_checkpointing`` is on, and a frozen
+camera branch is cut out of the graph, so nothing of it is kept alive across steps.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
+import torch.nn as nn
 from torch import Tensor
+from torch.utils.checkpoint import checkpoint
 
 from ontic_lib.camera.intrinsics import denormalize_intrinsics
 
@@ -32,6 +38,30 @@ PI3_REPO_URL = "https://github.com/yyfz/Pi3"
 FEATURE_LAYERS: Tuple[int, ...] = (8, 17, 26, 35)  # of the 36 decoder blocks
 
 
+def _detach_inputs(_module: nn.Module, args: Tuple[Any, ...], kwargs: Dict[str, Any]):
+    """Forward pre-hook that cuts the autograd graph at the module's inputs."""
+    return (
+        tuple(a.detach() if torch.is_tensor(a) else a for a in args),
+        {k: (v.detach() if torch.is_tensor(v) else v) for k, v in kwargs.items()},
+    )
+
+
+def _checkpoint_block(module: nn.Module) -> None:
+    """Recompute the block's activations in the backward instead of storing them.
+
+    Active only when gradients are enabled and the block has trainable parameters; the
+    forward result is unchanged.
+    """
+    original = module.forward
+
+    def forward(*args, **kwargs):
+        if torch.is_grad_enabled() and any(p.requires_grad for p in module.parameters()):
+            return checkpoint(original, *args, use_reentrant=False, **kwargs)
+        return original(*args, **kwargs)
+
+    module.forward = forward
+
+
 @register_backbone("pi3x")
 @dataclass(kw_only=True)
 class Pi3XBackboneConfig(BackboneConfig):
@@ -49,8 +79,10 @@ class Pi3XBackbone(BackboneBase):
     """Pi3X with ``requires_grad`` freezing.
 
     ``freeze_backbone`` → encoder + decoder (+ register token); ``freeze_dpt_head`` → point,
-    confidence and metric heads; ``freeze_cam_dec`` → camera head; ``freeze_cam_enc`` → the
-    multimodal conditioning encoders.
+    confidence and metric heads; ``freeze_cam_dec`` → camera head, whose inputs are then
+    detached so the frozen branch keeps no activations alive; ``freeze_cam_enc`` → the
+    multimodal conditioning encoders. ``gradient_checkpointing`` recomputes the encoder and
+    decoder blocks in the backward.
     """
 
     PATCH_SIZE = 14
@@ -65,6 +97,9 @@ class Pi3XBackbone(BackboneBase):
 
         m = self.pi3x
         set_frozen([m.encoder, m.decoder, m.register_token], cfg.freeze_backbone)
+        if cfg.gradient_checkpointing:
+            for blk in [*m.decoder, *getattr(m.encoder, "blocks", [])]:
+                _checkpoint_block(blk)
         set_frozen(
             [
                 m.point_decoder,
@@ -78,6 +113,8 @@ class Pi3XBackbone(BackboneBase):
             cfg.freeze_dpt_head,
         )
         set_frozen([m.camera_decoder, m.camera_head], cfg.freeze_cam_dec)
+        if cfg.freeze_cam_dec:
+            m.camera_decoder.register_forward_pre_hook(_detach_inputs, with_kwargs=True)
         if cfg.use_multimodal:
             encoders = [
                 getattr(m, a, None)
@@ -175,8 +212,8 @@ class Pi3XBackbone(BackboneBase):
         )
         try:
             with (
-                torch.autocast(images.device.type, dtype=amp_dtype()),
-                torch.set_grad_enabled(any_trainable),
+                torch.autocast("cuda", dtype=amp_dtype(), enabled=images.is_cuda),
+                torch.set_grad_enabled(any_trainable and torch.is_grad_enabled()),
             ):
                 out = self.pi3x(
                     images, intrinsics=cond_intr, poses=cond_poses, with_prior=with_prior
