@@ -341,3 +341,16 @@ def test_import_pulls_in_no_optional_module():
         [sys.executable, "-c", script], capture_output=True, text=True, env=env, timeout=120
     )
     assert out.returncode == 0 and out.stdout.strip() == "ok", out.stderr
+
+
+def test_nvsmi_line_parses_to_olympus_keys():
+    vals = tracking._parse_nvsmi_line("87, 41, 20480, 65536, 250.5, 400, 61")
+    assert vals["utilization"] == 87 and vals["memory_utilization"] == 41
+    assert vals["allocated_memory"] == 20.0 and vals["total_memory"] == 64.0 and abs(vals["memory_usage"] - 0.3125) < 1e-9
+    assert vals["power"] == 250.5 and abs(vals["power_percent"] - 0.62625) < 1e-9 and vals["temp"] == 61
+    assert tracking._parse_nvsmi_line("[N/A], [N/A], 100, 0, , , ") == {"allocated_memory": 100 / 1024, "total_memory": 0.0}
+
+
+def test_gpu_metrics_never_raises(monkeypatch):
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
+    assert tracking.gpu_metrics(device=0, label="r0") == {} or all(k.startswith("gpu/r0/") for k in tracking.gpu_metrics(device=0, label="r0"))

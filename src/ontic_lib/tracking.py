@@ -782,3 +782,87 @@ def figure(fig, caption: str | None = None):
     """A matplotlib or plotly figure -> `olympus.Html`, which renders it (olympus has no
     Image-from-figure)."""
     return olympus().Html(fig, caption=caption)
+
+
+# ---------------------------------------------------------------------------
+# GPU utilisation of the calling process's device, in Olympus's own key layout
+# (``gpu/<index>/utilization`` ...), so offline runs and mirrors look like the
+# client's automatic system metrics. Read inside the training process: a mirror
+# on a login node would describe the wrong machine.
+# ---------------------------------------------------------------------------
+
+_NVSMI_FIELDS = "utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,power.limit,temperature.gpu"
+
+
+def _parse_nvsmi_line(line: str) -> dict:
+    vals = [v.strip() for v in line.split(",")]
+    def num(i):
+        try:
+            return float(vals[i])
+        except (ValueError, IndexError):
+            return None
+    util, mem_util, used_mib, total_mib, power, limit, temp = (num(i) for i in range(7))
+    out = {}
+    if util is not None:
+        out["utilization"] = util
+    if mem_util is not None:
+        out["memory_utilization"] = mem_util
+    if used_mib is not None:
+        out["allocated_memory"] = used_mib / 1024
+    if total_mib is not None:
+        out["total_memory"] = total_mib / 1024
+    if used_mib is not None and total_mib:
+        out["memory_usage"] = used_mib / total_mib
+    if power is not None:
+        out["power"] = power
+    if power is not None and limit:
+        out["power_percent"] = power / limit
+    if temp is not None:
+        out["temp"] = temp
+    return out
+
+
+def gpu_metrics(device: int | None = None, label: str | int | None = None) -> dict:
+    """Utilisation, memory (GiB and fraction), power and temperature of one CUDA device, keyed
+    ``gpu/<label>/<name>`` like Olympus's automatic GPU metrics. ``device`` defaults to the
+    current torch device; ``label`` (e.g. the distributed rank) defaults to the device index.
+    Uses pynvml when installed, else one ``nvidia-smi`` query; ``{}`` when neither works."""
+    if device is None:
+        try:
+            import torch
+
+            device = torch.cuda.current_device() if torch.cuda.is_available() else 0
+        except Exception:
+            device = 0
+    label = device if label is None else label
+    vals: dict = {}
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+        h = pynvml.nvmlDeviceGetHandleByIndex(device)
+        util = pynvml.nvmlDeviceGetUtilizationRates(h)
+        mem = pynvml.nvmlDeviceGetMemoryInfo(h)
+        vals = {"utilization": float(util.gpu), "memory_utilization": float(util.memory),
+                "allocated_memory": mem.used / 2**30, "total_memory": mem.total / 2**30, "memory_usage": mem.used / mem.total}
+        try:
+            vals["power"] = pynvml.nvmlDeviceGetPowerUsage(h) / 1000
+            vals["power_percent"] = vals["power"] / (pynvml.nvmlDeviceGetEnforcedPowerLimit(h) / 1000)
+        except Exception:
+            pass
+        try:
+            vals["temp"] = float(pynvml.nvmlDeviceGetTemperature(h, pynvml.NVML_TEMPERATURE_GPU))
+        except Exception:
+            pass
+    except Exception:
+        try:
+            import subprocess
+
+            out = subprocess.run(
+                ["nvidia-smi", f"--id={device}", f"--query-gpu={_NVSMI_FIELDS}", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=10,
+            ).stdout.strip().splitlines()
+            vals = _parse_nvsmi_line(out[0]) if out else {}
+        except Exception:
+            vals = {}
+    return {f"gpu/{label}/{k}": v for k, v in vals.items()}

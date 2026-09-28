@@ -137,6 +137,18 @@ def sync_gradients(module_or_params: nn.Module | Iterable[nn.Parameter], *, aver
                 p.grad.copy_(g.view_as(p))
 
 
+def gather_dicts(local: dict, dst: int = 0) -> list[dict]:
+    """Every rank's small dict (picklable values) collected on ``dst``, in rank order; other
+    ranks get ``[]``. A single process gets ``[local]``. For per-rank facts such as GPU
+    utilisation that the logging rank merges into one record."""
+    if not is_distributed():
+        return [local]
+    world = dist.get_world_size()
+    out: list = [None] * world if dist.get_rank() == dst else None
+    dist.gather_object(local, out, dst=dst)
+    return list(out) if out is not None else []
+
+
 def broadcast_flag(flag: bool, src: int = 0) -> bool:
     """``src``'s boolean on every rank: for decisions taken on one rank that every rank must
     follow, such as leaving the training loop on a wall-clock budget."""

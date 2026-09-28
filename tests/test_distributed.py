@@ -101,6 +101,12 @@ def _worker(rank: int, world: int, port: int) -> None:
     torch.testing.assert_close(net.weight.grad, torch.full_like(net.weight, (world + 1) / 2))
     torch.testing.assert_close(net.bias.grad, torch.full_like(net.bias, 1.0 / world))
 
+    gathered = distributed.gather_dicts({"gpu/%d/utilization" % rank: float(rank)})
+    if rank == 0:
+        assert gathered == [{"gpu/%d/utilization" % r: float(r)} for r in range(world)]
+    else:
+        assert gathered == []
+
     assert distributed.broadcast_flag(rank == 0) is True
     assert distributed.broadcast_flag(rank != 0) is False
 
@@ -121,3 +127,7 @@ def _worker(rank: int, world: int, port: int) -> None:
 
 def test_two_process_gloo():
     mp.spawn(_worker, args=(2, _free_port()), nprocs=2, join=True)
+
+
+def test_gather_dicts_single_process():
+    assert distributed.gather_dicts({"a": 1}) == [{"a": 1}]
