@@ -261,3 +261,20 @@ def test_local_logger_missing_extras_name_the_extra(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "PIL.Image", None)
     with pytest.raises(ImportError, match=r"ontic-viz\[images\]"):
         log.log_image("k", torch.zeros(3, 2, 2), 0)
+
+
+def test_local_logger_writes_metrics_jsonl(tmp_path):
+    import json
+
+    import torch
+
+    from ontic_viz.validation import LocalVizLogger
+
+    logger = LocalVizLogger(tmp_path / "viz", metrics_file=tmp_path / "metrics.jsonl")
+    logger.log_metrics({"train/loss": 0.5, "info/step": 3, "flag": True, "t": torch.tensor(2.0), "skip": "text"}, step=3)
+    logger.log_metrics({"val/psnr": 30.25}, step=4)
+    recs = [json.loads(l) for l in (tmp_path / "metrics.jsonl").read_text().splitlines()]
+    assert [r["step"] for r in recs] == [3, 4]
+    assert recs[0]["train/loss"] == 0.5 and recs[0]["info/step"] == 3 and recs[0]["flag"] == 1.0 and recs[0]["t"] == 2.0
+    assert "skip" not in recs[0] and "ts" in recs[0] and recs[1]["val/psnr"] == 30.25
+    LocalVizLogger(tmp_path / "viz").log_metrics({"x": 1.0}, step=1)  # no file: scalars dropped, no error

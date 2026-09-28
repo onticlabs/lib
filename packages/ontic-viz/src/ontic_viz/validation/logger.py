@@ -7,6 +7,8 @@ are PLY-style structured arrays (``x/y/z/red/green/blue``).
 from __future__ import annotations
 
 import importlib
+import json
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -143,12 +145,19 @@ class OlympusVizLogger(VizLogger):
 
 class LocalVizLogger(VizLogger):
     """Saves visualizations under ``log_dir``: PNG images (and figures), MP4 videos
-    (``ontic-viz[video]``) and PLY point clouds (``ontic-viz[ply]``). Scalars and
-    histograms are dropped."""
+    (``ontic-viz[video]``) and PLY point clouds (``ontic-viz[ply]``). Scalars go to
+    ``metrics_file`` when one is given, one JSON object per ``log_metrics`` call in the
+    ``ontic_lib.tracking`` layout (``{"step", "ts", <metrics>}``; a tracker mirror can
+    replay the file into Olympus from a machine with network access); histograms are
+    dropped."""
 
-    def __init__(self, log_dir: Path | str):
+    def __init__(self, log_dir: Path | str, metrics_file: Path | str | None = None):
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        self._metrics_fh = None
+        if metrics_file is not None:
+            Path(metrics_file).parent.mkdir(parents=True, exist_ok=True)
+            self._metrics_fh = open(metrics_file, "a", encoding="utf-8")
 
     def log_image(self, key, image, step, caption=None):
         image = image.clamp(0, 1)
@@ -177,7 +186,18 @@ class LocalVizLogger(VizLogger):
         clip.write_videofile(str(save_path), logger=None)
 
     def log_metrics(self, metrics, step):
-        pass  # scalars are not written locally
+        if self._metrics_fh is None:
+            return
+        rec: dict = {"step": int(step), "ts": time.time()}
+        for k, v in metrics.items():
+            if isinstance(v, bool):
+                rec[k] = float(v)
+            elif isinstance(v, (int, float)):
+                rec[k] = v
+            elif hasattr(v, "numel") and v.numel() == 1:
+                rec[k] = float(v)
+        self._metrics_fh.write(json.dumps(rec) + "\n")
+        self._metrics_fh.flush()
 
     def log_point_cloud(self, key, vertex_data, step):
         try:
