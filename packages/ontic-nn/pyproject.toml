@@ -29,7 +29,7 @@ velodepth = [  # https://github.com/lpiccinelli-eth/velodepth (pinned source; no
 # Backbone wrappers (ontic_nn.wrappers) and metric depth models (ontic_nn.metric_depth).
 # Each extra lists the pip-installable pieces the upstream needs at import / build time; the
 # research package itself is not on PyPI — install it from the linked repository (a clone on
-# PYTHONPATH / a .pth file, or `pip install --no-deps <clone>`). Weights come from the HF hub.
+# PYTHONPATH / a .pth file, or `pip install --no-deps <clone>`). Weights come from the ontic store, else the HF hub.
 da3 = [  # https://github.com/ByteDance-Seed/Depth-Anything-3  (package `depth_anything_3`)
     "huggingface_hub>=0.24", "safetensors>=0.4", "omegaconf>=2.3", "addict>=2.4",
     "opencv-python>=4.8", "pillow>=10", "trimesh>=4", "imageio>=2.30", "moviepy>=1.0.3,<2",

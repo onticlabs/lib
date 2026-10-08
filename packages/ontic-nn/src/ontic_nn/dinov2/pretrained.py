@@ -1,17 +1,21 @@
 """Pretrained DINOv2 weights (Meta's public release) and a frozen feature-extractor wrapper.
 
-Weights are downloaded through ``torch.hub`` on first use and cached under the
-hub directory; nothing is fetched at import time.
+Weights come from the ontic store when :data:`ontic_nn.weights.ONTIC_WEIGHTS` lists the
+release URL, else through ``torch.hub`` on first use (cached under the hub directory);
+nothing is fetched at import time.
 """
 
 from __future__ import annotations
 
 from typing import Dict, Literal, Optional, Tuple
 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import pack, rearrange, unpack
 from torch import Tensor
+
+from ontic_nn.weights import ontic_path
 
 from .model import DINOv2, DinoVisionTransformer
 
@@ -45,11 +49,15 @@ def load_pretrained_dinov2(
     model = DINOv2(
         variant, use_checkpointing=use_checkpointing, num_register_tokens=4 if use_reg else 0
     )
-    from torch.hub import load_state_dict_from_url  # lazy: network/cache access
+    stored = ontic_path(url, url.rsplit("/", 1)[-1])
+    if stored is not None:
+        state = torch.load(stored, map_location="cpu", weights_only=True)
+    else:
+        from torch.hub import load_state_dict_from_url  # lazy: network/cache access
 
-    state = load_state_dict_from_url(
-        url, map_location="cpu", check_hash=False, file_name=url.rsplit("/", 1)[-1]
-    )
+        state = load_state_dict_from_url(
+            url, map_location="cpu", check_hash=False, file_name=url.rsplit("/", 1)[-1]
+        )
     model.load_state_dict(state, strict=True)
     return model
 

@@ -31,7 +31,8 @@ transformers (vendored from Meta's DINOv2, Apache-2.0). Tokens are
 
 DINOv2 vision transformer (CLS token, optional register tokens, patch tokens,
 bicubic pos-embed resizing) plus loading of Meta's released weights. Weights
-come through `torch.hub` on first use and are cached; nothing is fetched at
+come from the ontic store ([weights](#weights)) when the release URL is listed
+there, else through `torch.hub`, on first use and cached; nothing is fetched at
 import time.
 
 | name | one line |
@@ -39,7 +40,7 @@ import time.
 | `DinoVisionTransformer` | The ViT module |
 | `vit_small` / `vit_base` / `vit_large` / `vit_giant2` | Size constructors (`num_register_tokens=...`) |
 | `DINOv2` | Randomly initialised model for `"vits" / "vitb" / "vitl" / "vitg"` (patch 14, img 518) |
-| `load_pretrained_dinov2` | `Variant` (+ 4 registers if `use_reg`) with Meta's weights |
+| `load_pretrained_dinov2` | `Variant` (+ 4 registers if `use_reg`) with Meta's weights (ViT-B/14 from the store) |
 | `StandaloneDinoExtractor` | Frozen wrapper `(images, mask=None) -> patch features` |
 | `Variant` / `EMBED_DIM` / `PATCH_SIZE` | `Literal["vits","vitb","vitl","vitg"]`, embed dims per variant, `14` |
 
@@ -170,6 +171,33 @@ g2 = load_gaussians("scene.npz")
 g2.covariance().shape                                      # torch.Size([100, 3, 3])
 ```
 
+## weights
+
+The pinned pretrained weights the backbones, metric/video depth models, DINOv2
+and the trackers load are also immutable ontic model jobs (`ontic commit-data
+--kind model`, project `3dgsim`). `ONTIC_WEIGHTS` maps each public source the
+code names (an HF repo id, or the `torch.hub` URL of DINOv2 ViT-B/14) to its job;
+`resolve_checkpoint`, `load_pretrained_dinov2` and TrackCraft3R's Wan base-model
+lookup consult it after an explicit `checkpoint_path` and before any hub.
+
+`ontic_path(source, filename=None, *, allow_download=True)` returns the file (or
+the artifact directory) from the `ontic` CLI's pull cache (`ONTIC_CACHE_DIR` /
+`XDG_CACHE_HOME` / `~/.cache/ontic`, `jobs/<id>/output/data/...`). On a miss it
+runs `ontic pull <job> --path data` in `$ONTIC_REPO` (else the working
+directory, which must be inside the experiments repo); a source the table does
+not list, `allow_download=False`, an active `offline_guard`, or a failed pull
+(no CLI, no `ontic.toml`, no session: a warning names the cause) returns
+`None`, and the caller fetches from the hub as before. Nothing imports the CLI.
+The installer manifest (`scripts/model_weights.json`, field `ontic_job`) carries
+the same ids, and `scripts/install_models.py --download-weights` serves a model
+from the store before Hugging Face.
+
+| name | one line |
+| --- | --- |
+| `ONTIC_WEIGHTS` / `OnticWeights(job, source="data")` | Source -> job table; `source` is the path under the job's `output/` |
+| `ontic_path` | Local path from the pull cache, pulling on a miss; `None` -> use the hub |
+| `ontic_cache_root` | The CLI's cache root, same precedence as `ontic` |
+
 ## trackers
 
 Pretrained 3D point tracking in `ontic_nn.trackers`: `MVTracker`, `TAPIP3D`,
@@ -213,8 +241,9 @@ Omit `--download-weights` for code only; `--download-only` fetches weights later
 (`freeze_backbone`, `freeze_dpt_head`, `freeze_cam_dec`, `freeze_cam_enc`),
 `long_side` (default 518), `gradient_checkpointing`, and the checkpoint fields
 `checkpoint_path` (a downloaded file / snapshot dir, used first), `cache_dir`
-(`None` = the HF / torch-hub cache) and `allow_download` (`False` = cache only);
-subclasses add their `model_dir` / `model_name` and implement `build()`.
+(`None` = the HF / torch-hub cache) and `allow_download` (`False` = caches only);
+between the two the ontic store serves every pinned model ([weights](#weights)).
+Subclasses add their `model_dir` / `model_name` and implement `build()`.
 `BackboneBase(nn.Module)`: `forward(images, extrinsics=None, intrinsics=None,
 depth=None) -> BackboneOutput`, `patch_size`, `encoder_dim`,
 `accepts_gt_cameras` (True where GT cameras *condition* the model rather than
@@ -240,7 +269,7 @@ prefer GT over predicted.
 | `<Name>BackboneConfig` / `<Name>Backbone` | Per-model config + module (`DA3`, `MA`, `VGGT`, `Pi3X`, `DVLT`, `MoGe3`, `GTDepth`) |
 | `load_da3` | Upstream `DepthAnything3` from a snapshot / the hub, or a random-init preset |
 | `offline_guard(allow_download)` | Context manager: with `False`, HF hub and `torch.hub` are cache-only |
-| `resolve_checkpoint` | Local path of a checkpoint: `checkpoint_path` first, else the HF hub |
+| `resolve_checkpoint` | Local path of a checkpoint: `checkpoint_path`, else the ontic store, else the HF hub |
 | `import_research_module` | `importlib.import_module` with an `ImportError` naming extra + repo |
 | `resize_to_long_side` / `amp_dtype` | Patch-snapped long-side resize; bf16-or-fp16 autocast dtype |
 | `convert_to_buffer` / `buffers_to_params` / `set_frozen` / `extract_weights` | Parameter-freezing and state-dict helpers |

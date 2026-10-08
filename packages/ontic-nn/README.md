@@ -95,8 +95,11 @@ imports, so their generic package names are not added to every Python process.
 Explicit `repo_path` settings and TAPIP3D's environment override take precedence.
 No manual tracker checkout paths are needed after this installer succeeds.
 
-With `--download-weights`, the installer downloads the default checkpoints for
+With `--download-weights`, the installer fetches the default checkpoints for
 all seven viewer backbones, VDA Small/Base/Large, VeloDepth, and all four trackers.
+Each is served from the ontic store first (`ontic_job` in the manifest, pulled
+through the `ontic` CLI into its cache; see [weights](../../docs/ontic_nn.md#weights))
+and from Hugging Face / the release URLs only when the store cannot serve it.
 DA3's backbone and temporal mode share one snapshot. It includes gtdepth's
 DINOv2-B weights, VeloDepth's ConvNeXt initializers, and TrackCraft3R's Wan base
 model and tokenizer. Pins, file sizes and SHA256 digests are recorded in
@@ -196,7 +199,8 @@ The default check reports MoGe-3 as **skipped** without usable CUDA because
 FlexGEMM queries GPU properties during import. Missing dependencies return a
 nonzero exit code. These checks do not validate pretrained inference or download
 model weights.
-Viewer downloads are opt-in; VGGT-Omega requires Hugging Face checkpoint access.
+Viewer downloads are opt-in; VGGT-Omega requires Hugging Face checkpoint access
+unless the ontic store serves it.
 CUDA 13 inference also requires a compatible host driver.
 
 Individual extras such as `ontic-nn[vggt]` still contain support dependencies

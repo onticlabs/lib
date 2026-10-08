@@ -19,7 +19,8 @@
     "targets": [
       "backbone_checkpoints.da3",
       "video_checkpoints.da3_nested"
-    ]
+    ],
+    "ontic_job": "12bb1b62-2154-4e31-8ea3-2b4869065ac5"
   },
   {
     "name": "ma",
@@ -40,7 +41,8 @@
     ],
     "targets": [
       "backbone_checkpoints.ma"
-    ]
+    ],
+    "ontic_job": "3d39bd10-db0f-4203-9445-1a8a67cb5063"
   },
   {
     "name": "vggt",
@@ -57,7 +59,8 @@
     "targets": [
       "backbone_checkpoints.vggt"
     ],
-    "checkpoint": "vggt_omega_1b_512.pt"
+    "checkpoint": "vggt_omega_1b_512.pt",
+    "ontic_job": "e96685ea-5bd1-4975-b1a1-3fd71582c990"
   },
   {
     "name": "pi3x",
@@ -78,7 +81,8 @@
     ],
     "targets": [
       "backbone_checkpoints.pi3x"
-    ]
+    ],
+    "ontic_job": "4151f5cf-178f-4693-aef3-aecfa958590e"
   },
   {
     "name": "dvlt",
@@ -95,7 +99,8 @@
     "targets": [
       "backbone_checkpoints.dvlt"
     ],
-    "checkpoint": "model.safetensors"
+    "checkpoint": "model.safetensors",
+    "ontic_job": "9fb5b5a3-e8ba-494d-b185-947724cbc733"
   },
   {
     "name": "moge3",
@@ -112,7 +117,8 @@
     "targets": [
       "backbone_checkpoints.moge3"
     ],
-    "checkpoint": "model.pt"
+    "checkpoint": "model.pt",
+    "ontic_job": "9275a313-cc21-4e95-8cdb-1058ae092bb1"
   },
   {
     "name": "velodepth",
@@ -147,7 +153,8 @@
         "size": 114604250,
         "sha256": "ead9174a3bca8a13b2754b5d1f9c20697f701e8f50d2114eb8bdddcaa3b69278"
       }
-    ]
+    ],
+    "ontic_job": "0e193b20-3ccb-4c08-b98e-7412536cc7b9"
   },
   {
     "name": "vda_small",
@@ -164,7 +171,8 @@
     "targets": [
       "video_checkpoints.vda_small"
     ],
-    "checkpoint": "metric_video_depth_anything_vits.pth"
+    "checkpoint": "metric_video_depth_anything_vits.pth",
+    "ontic_job": "eb690581-45fd-412b-9c61-6a1f1657d68a"
   },
   {
     "name": "vda_base",
@@ -181,7 +189,8 @@
     "targets": [
       "video_checkpoints.vda_base"
     ],
-    "checkpoint": "metric_video_depth_anything_vitb.pth"
+    "checkpoint": "metric_video_depth_anything_vitb.pth",
+    "ontic_job": "4ea88071-7b16-4175-815b-b2d225e37fdb"
   },
   {
     "name": "vda_large",
@@ -198,7 +207,8 @@
     "targets": [
       "video_checkpoints.vda_large"
     ],
-    "checkpoint": "metric_video_depth_anything_vitl.pth"
+    "checkpoint": "metric_video_depth_anything_vitl.pth",
+    "ontic_job": "23fe7661-82e9-47e4-bf4b-b5ea8771d8cf"
   },
   {
     "name": "gtdepth",
@@ -214,7 +224,8 @@
         "size": 346378731,
         "sha256": "0b8b82f85de91b424aded121c7e1dcc2b7bc6d0adeea651bf73a13307fad8c73"
       }
-    ]
+    ],
+    "ontic_job": "408d98ca-93a3-4ec4-aa89-d07ac1625d0b"
   },
   {
     "name": "mvtracker",
@@ -231,7 +242,8 @@
     "checkpoint": "mvtracker_200000_june2025.pth",
     "targets": [
       "trackers.mvtracker.checkpoint_path"
-    ]
+    ],
+    "ontic_job": "5594b910-5c4a-4c8f-9a9e-fc86683eaed9"
   },
   {
     "name": "tapip3d",
@@ -248,7 +260,8 @@
     "checkpoint": "tapip3d_final.pth",
     "targets": [
       "trackers.tapip3d.checkpoint_path"
-    ]
+    ],
+    "ontic_job": "7c2dc8b7-a1ba-41df-8dc8-a00665cb8e7d"
   },
   {
     "name": "cotracker3",
@@ -265,7 +278,8 @@
     "checkpoint": "scaled_online.pth",
     "targets": [
       "trackers.cotracker3.checkpoint_path"
-    ]
+    ],
+    "ontic_job": "bae32cb6-f7ac-494d-91d1-115b945b758c"
   },
   {
     "name": "trackcraft3r",

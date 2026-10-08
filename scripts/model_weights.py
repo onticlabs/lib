@@ -1,7 +1,9 @@
 """Pinned inference assets and viewer configuration for the model installer.
 
-Downloads never import research code or deserialize checkpoints. Hugging Face
-handles resumable transfers; ordinary URL assets are verified before publication.
+Every model is first looked up in the ontic store (its ``ontic_job``, served through
+``ontic_nn.weights`` and the ``ontic`` CLI's pull cache); the public hubs are the fallback.
+Downloads never import research code or deserialize checkpoints. Hugging Face handles
+resumable transfers; ordinary URL assets are verified before publication.
 """
 
 from __future__ import annotations
@@ -37,6 +39,33 @@ def verify_file(path: Path, asset: dict) -> None:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
         if digest != asset["sha256"]:
             raise RuntimeError(f"Checkpoint SHA256 mismatch: {path}; remove it and retry")
+
+
+def ontic_artifact(model: dict) -> Path | None:
+    """The model's ontic artifact directory (pulled on a miss), or ``None`` when the store cannot
+    serve it: no ``ontic_job`` in the manifest, ``ontic_nn`` not importable, or no pull."""
+    if "ontic_job" not in model:
+        return None
+    try:
+        from ontic_nn.weights import ontic_path
+    except ImportError:
+        return None
+    key = model["repo_id"] if "repo_id" in model else model["torch_assets"][0]["url"]
+    return ontic_path(key)
+
+
+def verify_artifact(stored: Path, model: dict) -> None:
+    """Every pinned file of ``model`` is in ``stored`` with the manifest's size and digest."""
+    for asset in model.get("files", []):
+        verify_file(stored / asset["name"], asset)
+    for asset in model.get("torch_assets", []):
+        candidates = [stored / asset["name"], stored / "checkpoints" / asset["name"]]
+        path = next((p for p in candidates if p.is_file()), None)
+        if path is None:
+            raise RuntimeError(f"{asset['name']} missing from the ontic artifact {stored}")
+        verify_file(path, asset)
+    for asset in model.get("base_model", {}).get("files", []):
+        verify_file(stored / "wan_models" / model["base_model"]["repo_id"] / asset["name"], asset)
 
 
 def download_torch_asset(asset: dict, hub: Path) -> Path:
@@ -138,6 +167,23 @@ def download_weights(
     for model in models:
         print(f"Downloading/verifying {model['name']} ...", flush=True)
         checkpoint = None
+        if (stored := ontic_artifact(model)) is not None:
+            verify_artifact(stored, model)
+            checkpoint = stored / model["checkpoint"] if "checkpoint" in model else stored
+            for target in model["targets"]:
+                set_config_value(config, target, str(checkpoint))
+            if model.get("torch_assets") and "repo_id" in model:
+                config["torch_hub_dir"] = str(stored)
+            if model["group"] == "trackers":
+                set_config_value(config, f"trackers.{model['name']}.allow_download", False)
+            if "base_model" in model:
+                set_config_value(
+                    config,
+                    f"trackers.{model['name']}.base_model_cache_dir",
+                    str(stored / "wan_models"),
+                )
+            print(f"  served by the ontic store: {stored}", flush=True)
+            continue
         if "repo_id" in model:
             snapshot = download_repository(model, root)
             checkpoint = snapshot / model["checkpoint"] if "checkpoint" in model else snapshot

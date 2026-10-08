@@ -15,6 +15,14 @@ weights = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(weights)
 
 
+@pytest.fixture(autouse=True)
+def no_store(monkeypatch):
+    """The ontic store is out of reach in tests unless a test puts an artifact there."""
+    import ontic_nn.weights as store
+
+    monkeypatch.setattr(store, "ontic_path", lambda key, filename=None, **kw: None)
+
+
 def asset(name="model.pth", data=b"checkpoint"):
     return dict(name=name, size=len(data), sha256=hashlib.sha256(data).hexdigest())
 
@@ -157,3 +165,41 @@ def test_viewer_loads_installer_defaults_and_explicit_config_takes_precedence(
     assert cli.load_model_config(explicit) == {"trackers": {}}
     with pytest.raises(FileNotFoundError):
         cli.load_model_config(tmp_path / "missing.json")
+
+
+def test_ontic_store_serves_a_model_before_the_hubs(tmp_path, monkeypatch):
+    import ontic_nn.weights as store
+
+    data = b"checkpoint"
+    stored = tmp_path / "artifact"
+    (stored / "checkpoints").mkdir(parents=True)
+    (stored / "model.safetensors").write_bytes(data)
+    (stored / "checkpoints" / "init.pt").write_bytes(data)
+    model = dict(
+        name="velo",
+        group="backbones",
+        repo_id="org/velo",
+        revision="a" * 40,
+        ontic_job="job",
+        files=[asset("model.safetensors")],
+        torch_assets=[{**asset("init.pt"), "url": "https://example.test/init.pt"}],
+        targets=["video_checkpoints.velo"],
+    )
+    monkeypatch.setattr(weights, "select_models", lambda group, names=None: [model])
+    monkeypatch.setattr(weights, "default_directory", lambda: tmp_path / "config")
+    monkeypatch.setattr(store, "ontic_path", lambda key, filename=None, **kw: stored)
+    monkeypatch.setattr(weights, "download_repository", lambda *a, **kw: pytest.fail("hub used"))
+    config_path = weights.download_weights("all", directory=tmp_path)
+    config = json.loads(config_path.read_text())
+    assert config["video_checkpoints"]["velo"] == str(stored)
+    assert config["torch_hub_dir"] == str(stored)
+
+    (stored / "model.safetensors").write_bytes(b"corruption")
+    with pytest.raises(RuntimeError, match="SHA256 mismatch"):
+        weights.download_weights("all", directory=tmp_path)
+
+
+def test_models_outside_the_store_or_without_the_lib_use_the_hubs(monkeypatch):
+    assert weights.ontic_artifact({"name": "x"}) is None
+    monkeypatch.setitem(__import__("sys").modules, "ontic_nn.weights", None)
+    assert weights.ontic_artifact({"name": "x", "ontic_job": "j", "repo_id": "o/r"}) is None

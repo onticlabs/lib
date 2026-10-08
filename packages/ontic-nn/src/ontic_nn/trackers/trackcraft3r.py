@@ -51,6 +51,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
+from ontic_nn.weights import ontic_path
 from ontic_nn.wrappers.common import import_research_module, offline_guard, resolve_checkpoint
 
 from .common import (
@@ -528,8 +529,14 @@ def load_predictor(cfg: TrackCraft3RConfig) -> Any:
         )
 
     env = {}
-    if cfg.base_model_cache_dir:
-        env["MODELSCOPE_CACHE"] = str(Path(cfg.base_model_cache_dir).expanduser())
+    base_cache = cfg.base_model_cache_dir
+    if not base_cache:
+        # ModelScope resolves ``<cache>/<model_id>``; the ontic artifact keeps that layout.
+        stored = ontic_path(cfg.model_id, allow_download=cfg.allow_download)
+        if stored is not None:
+            base_cache = stored.parents[len(Path(cfg.model_id).parts) - 1]
+    if base_cache:
+        env["MODELSCOPE_CACHE"] = str(Path(base_cache).expanduser())
     if not cfg.allow_download:
         # The ModelConfig used by wan_video_new lives in diffsynth/utils/__init__.py.
         # It forwards this flag as local_files_only to ModelScope (including tokenizer assets).

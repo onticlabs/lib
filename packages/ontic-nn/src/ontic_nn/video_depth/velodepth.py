@@ -1,7 +1,9 @@
 """VeloDepth metric video depth with independent temporal state for each camera."""
 
+import contextlib
 from dataclasses import dataclass
 import inspect
+from pathlib import Path
 
 import torch
 from torch import nn
@@ -30,6 +32,29 @@ class VeloDepthConfig:
         return VeloDepthModel(self)
 
 
+def _bundled_hub(checkpoint):
+    """``checkpoint`` itself when the snapshot ships ``checkpoints/`` torch.hub assets."""
+    if checkpoint and (Path(checkpoint) / "checkpoints").is_dir():
+        return Path(checkpoint)
+    return None
+
+
+@contextlib.contextmanager
+def _torch_hub_dir(path):
+    """Serve ``torch.hub`` checkpoints from ``path/checkpoints``; restores the hub dir on exit."""
+    if path is None:
+        yield
+        return
+    import torch.hub
+
+    previous = torch.hub.get_dir()
+    torch.hub.set_dir(str(path))
+    try:
+        yield
+    finally:
+        torch.hub.set_dir(previous)
+
+
 class VeloDepthModel(nn.Module):
     def __init__(self, cfg: VeloDepthConfig):
         super().__init__()
@@ -47,8 +72,9 @@ class VeloDepthModel(nn.Module):
                 what="VeloDepth snapshot",
             )
             # Upstream also loads ConvNeXt initializers through torch.hub while
-            # constructing the model, before loading the complete HF checkpoint.
-            with offline_guard(cfg.allow_download):
+            # constructing the model, before loading the complete HF checkpoint; the ontic
+            # artifact carries them under ``checkpoints/`` in torch.hub's layout.
+            with offline_guard(cfg.allow_download), _torch_hub_dir(_bundled_hub(checkpoint)):
                 self.model = upstream.VeloDepth.from_pretrained(checkpoint)
         self.model.resolution_level = cfg.resolution_level
         self.model.requires_grad_(False).eval()

@@ -150,7 +150,8 @@ For manual setup, individual `ontic-nn[mvtracker]`, `[tapip3d]`, `[cotracker3]`
 and `[trackcraft3r]` extras provide Python dependencies only. Use a PyTorch/CUDA
 combination supported by your driver and build extensions against that same
 environment. No model files are downloaded
-at import time. `allow_download=True` permits downloads during `build()`;
+at import time. `allow_download=True` permits downloads during `build()`, from
+the ontic store first ([weights](ontic_nn.md#weights)) and the hubs after;
 `allow_download=False` requires local or already cached assets.
 
 | Registry key | Native setting | API revision inspected |

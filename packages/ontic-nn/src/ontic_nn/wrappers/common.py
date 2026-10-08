@@ -25,6 +25,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from ontic_nn.weights import ontic_path
+
 
 # ---------------------------------------------------------------------------
 # Config / module base
@@ -308,13 +310,14 @@ def resolve_checkpoint(
     extra: str = "",
     what: str = "checkpoint",
 ) -> Optional[str]:
-    """Local path of a checkpoint: ``checkpoint_path`` first, else the HuggingFace hub.
+    """Local path of a checkpoint: ``checkpoint_path``, else the ontic store, else the HF hub.
 
     ``checkpoint_path`` is a file or a snapshot directory (a directory plus ``filename`` gives
     ``dir/filename``); a missing path raises ``FileNotFoundError``. Otherwise ``repo_id`` is
-    fetched — one file when ``filename`` is given, else the whole snapshot — into ``cache_dir``
-    (``None`` → the HF cache). ``allow_download=False`` serves from that cache only and raises
-    ``RuntimeError`` on a miss. Returns ``None`` when neither source is given (random init).
+    served from the ontic cache when :data:`ontic_nn.weights.ONTIC_WEIGHTS` lists it (pulled on
+    a miss), else fetched — one file when ``filename`` is given, else the whole snapshot — into
+    ``cache_dir`` (``None`` → the HF cache). ``allow_download=False`` serves from the caches only
+    and raises ``RuntimeError`` on a miss. Returns ``None`` when neither source is given (random init).
     """
     if checkpoint_path:
         path = Path(checkpoint_path).expanduser()
@@ -329,6 +332,9 @@ def resolve_checkpoint(
         raise FileNotFoundError(f"{what}: checkpoint_path {checkpoint_path!r} does not exist")
     if not repo_id:
         return None
+    stored = ontic_path(repo_id, filename, allow_download=allow_download)
+    if stored is not None:
+        return str(stored)
     try:
         import huggingface_hub
     except ImportError as e:
