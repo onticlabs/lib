@@ -346,7 +346,9 @@
           "size": 11361920418,
           "sha256": "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d"
         }
-      ]
-    }
+      ],
+      "ontic_job": "71bd1d90-d6f7-4e28-bf05-e660fd58258d"
+    },
+    "ontic_job": "71bd1d90-d6f7-4e28-bf05-e660fd58258d"
   }
 ]

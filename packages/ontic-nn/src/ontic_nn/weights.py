@@ -57,6 +57,10 @@ ONTIC_WEIGHTS: Dict[str, OnticWeights] = {
     "ethz-vlg/mvtracker": OnticWeights("5594b910-5c4a-4c8f-9a9e-fc86683eaed9"),
     "zbww/tapip3d": OnticWeights("7c2dc8b7-a1ba-41df-8dc8-a00665cb8e7d"),
     "facebook/cotracker3": OnticWeights("bae32cb6-f7ac-494d-91d1-115b945b758c"),
+    "trackcraft3r/checkpoint": OnticWeights("71bd1d90-d6f7-4e28-bf05-e660fd58258d"),
+    "Wan-AI/Wan2.1-T2V-1.3B": OnticWeights(
+        "71bd1d90-d6f7-4e28-bf05-e660fd58258d", "data/wan_models/Wan-AI/Wan2.1-T2V-1.3B"
+    ),
 }
 
 
